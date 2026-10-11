@@ -146,7 +146,7 @@ export default async function handler(req, res) {
               y: coord.y, 
               width: coord.width || 9, 
               height: coord.height || 9, 
-              borderWidth: 0.5, 
+              borderWidth: 0, 
               borderColor: textColor,
             });
           });
