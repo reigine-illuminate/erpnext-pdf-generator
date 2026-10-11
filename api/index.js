@@ -43,10 +43,10 @@ export default async function handler(req, res) {
 
     // --- 3. HEADER TEXT INPUTS (SYNCED ACROSS ALL PAGES) ---
     const headerConfigs = [
-      { name: 'project_name', x: 69, y: 720, width: 120, height: 16 },
-      { name: 'fixture_type', x: 262, y: 720, width: 120, height: 16 },
-      { name: 'project_location', x: 432, y: 720, width: 120, height: 16 }
-    ];
+      { name: 'project_name', x: 75, y: 720, width: 125, height: 16 },
+      { name: 'fixture_type', x: 262, y: 720, width: 122, height: 16 },
+      { name: 'project_location', x: 432, y: 720, width: 130, height: 16 }
+    ];
 
     headerConfigs.forEach(cfg => {
       const textField = form.createTextField(cfg.name);
