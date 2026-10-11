@@ -12,7 +12,7 @@ export default async function handler(req, res) {
 
     chromium.setGraphicsMode = false;
 
-    // 1. RENDER BASE HTML TO PDF (Webflow handles pages 1 to N-1; space for Ordering Section is left blank)
+    // 1. RENDER BASE HTML TO PDF
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
-    // Load Fonts matching Webflow CSS variables
+    // Load Webflow Noto Serif Fonts
     let notowebFontBold, notowebFontReg;
     try {
       const fontBoldRes = await fetch('https://raw.githubusercontent.com/google/fonts/main/ofl/notoserif/NotoSerif-SemiBold.ttf');
@@ -51,10 +51,10 @@ export default async function handler(req, res) {
     const pages = pdfDoc.getPages();
     const targetPage = pages[pages.length - 1]; // Target final page
 
-    // Webflow CSS Color Variables
+    // Webflow Color Palette (Converted to PDF 0-1 float scale)
     const mainColor = rgb(36 / 255, 36 / 255, 2 / 255);            // #242402
     const h2Color = rgb(111 / 255, 109 / 255, 105 / 255);          // #6f6d69
-    const headerBgColor = rgb(235 / 255, 235 / 230 / 255, 220 / 255); // rgba(36, 36, 2, 0.15) light tint
+    const headerBgColor = rgb(222 / 255, 222 / 255, 217 / 255);   // rgba(36, 36, 2, 0.15) light tint
 
     // --- A. HEADER TEXT INPUT FIELDS (Top of every page) ---
     const headerConfigs = [
@@ -74,8 +74,8 @@ export default async function handler(req, res) {
       tf.setFontSize(10);
     });
 
-    // --- B. DRAW WEBFLOW SECTION HEADINGS NATIVELY ---
-    let currentY = 660; // Starting Y anchor near top of order block on final page
+    // --- B. SECTION HEADINGS ---
+    let currentY = 660; // Starting Y anchor
 
     // 1. "HOW TO ORDER" Heading
     targetPage.drawText("HOW TO ORDER", {
@@ -86,7 +86,6 @@ export default async function handler(req, res) {
       color: h2Color,
     });
 
-    // "Example:" label right-aligned
     targetPage.drawText("Example:", {
       x: 520,
       y: currentY,
@@ -106,100 +105,86 @@ export default async function handler(req, res) {
       color: mainColor,
     });
 
-    currentY -= 20;
+    currentY -= 18;
 
-    // 3. Ordering Code Bar (Table Header Row)
+    // 3. Ordering Code Bar (Header Row)
     targetPage.drawRectangle({
       x: 40,
-      y: currentY - 4,
+      y: currentY - 3,
       width: 532,
-      height: 18,
+      height: 16,
       color: headerBgColor,
     });
 
     targetPage.drawText("Ordering Code: {{SPEC-ORDERING-CODE-INPUT}}", {
       x: 44,
-      y: currentY,
+      y: currentY + 1,
       size: 10,
       font: notowebFontBold,
       color: mainColor,
     });
 
-    currentY -= 25; // Anchor for Row 1 Grid
+    currentY -= 25; // Grid starting anchor
 
-    // --- C. DEFINE NATIVE GRID LAYOUT (6 Columns) ---
-    // Page width = 612pt. Margin = 40pt left/right. Content area = 532pt.
-    // Each column width ≈ 88pt.
-    const row1Y = currentY;
-    const row2Y = currentY - 140; // Offset for Row 2
+    // --- C. DYNAMIC FLEX GRID ENGINE (Max 6 columns per row) ---
+    const pageMarginLeft = 40;
+    const totalContentWidth = 532; // 612pt letter width - 80pt margins
+    const maxCols = 6;
+    const colWidth = totalContentWidth / maxCols; // 88.66pt per column
 
-    const layoutGrid = {
-      // Row 1 Columns
-      'WIRELESS PROTOCOL': { x: 40, y: row1Y },
-      'ENVIRONMENT RATING': { x: 128, y: row1Y },
-      'CCT': { x: 216, y: row1Y },
-      'OUTPUT LEVEL': { x: 304, y: row1Y },
-      'MOUNTING METHOD': { x: 392, y: row1Y },
-      'FINISH': { x: 480, y: row1Y },
-
-      // Row 2 Columns
-      'LENGTH': { x: 40, y: row2Y },
-      'START FEED DIRECTION': { x: 128, y: row2Y },
-      'START FEED LENGTH': { x: 216, y: row2Y },
-      'END FEED DIRECTION': { x: 304, y: row2Y },
-      'END FEED LENGTH': { x: 392, y: row2Y }
-    };
-
-    // --- D. DRAW CATEGORIES, OPTIONS & ACROFORM RADIO BUTTONS ---
+    // Chunk steps into rows of up to 6
+    const rowChunks = [];
     if (Array.isArray(configurator_options)) {
-      configurator_options.forEach((step) => {
+      for (let i = 0; i < configurator_options.length; i += maxCols) {
+        rowChunks.push(configurator_options.slice(i, i + maxCols));
+      }
+    }
+
+    rowChunks.forEach((rowSteps) => {
+      let maxItemsInCurrentRow = 1;
+
+      rowSteps.forEach((step, colIdx) => {
+        const startX = pageMarginLeft + (colIdx * colWidth);
+        const startY = currentY;
+
         const optionLabel = (step.option_label || step.option_type || '').toUpperCase();
-
-        // Match column coordinates
-        let startX = 40;
-        let startY = row1Y;
-        for (const [key, coords] of Object.entries(layoutGrid)) {
-          if (optionLabel.includes(key)) {
-            startX = coords.x;
-            startY = coords.y;
-            break;
-          }
-        }
-
         const stepName = `step_${step.option_step}`;
 
-        // 1. Draw Category Title Wrapper
+        // 1. Draw Category Header & Separator
         targetPage.drawText(optionLabel, {
           x: startX,
           y: startY,
-          size: 8,
+          size: 7.5,
           font: notowebFontBold,
           color: mainColor,
         });
 
         targetPage.drawText("//", {
-          x: startX + 72,
+          x: startX + colWidth - 12,
           y: startY,
-          size: 8,
+          size: 7.5,
           font: notowebFontReg,
           color: mainColor,
         });
 
-        // Draw 0.25pt border-bottom line
+        // 0.25pt border-bottom line
         targetPage.drawLine({
           start: { x: startX, y: startY - 3 },
-          end: { x: startX + 82, y: startY - 3 },
+          end: { x: startX + colWidth - 6, y: startY - 3 },
           thickness: 0.25,
           color: mainColor,
         });
 
-        // 2. Handle Text Input vs. Radio Buttons
+        // 2. Render Form Controls (Length Input vs Radio Buttons)
         if (step.option_type === "Length") {
+          maxItemsInCurrentRow = Math.max(maxItemsInCurrentRow, 3);
+          
           const lengthField = form.createTextField(stepName);
           lengthField.addToPage(targetPage, {
             x: startX,
             y: startY - 22,
-            width: 65, height: 14,
+            width: Math.min(65, colWidth - 10),
+            height: 14,
             borderWidth: 0.5, borderColor: mainColor, textColor: mainColor, font: notowebFontBold,
           });
           lengthField.setFontSize(8);
@@ -207,7 +192,7 @@ export default async function handler(req, res) {
           targetPage.drawText("(spec-ordering-desc)", {
             x: startX,
             y: startY - 34,
-            size: 8,
+            size: 7,
             font: notowebFontReg,
             color: h2Color,
           });
@@ -220,18 +205,19 @@ export default async function handler(req, res) {
               : step.allowed_values_json;
           } catch(e){}
 
-          if (allowedValues.length > 0) {
+          if (Array.isArray(allowedValues) && allowedValues.length > 0) {
+            maxItemsInCurrentRow = Math.max(maxItemsInCurrentRow, allowedValues.length);
+            
             const radioGroup = form.createRadioGroup(stepName);
             let defaultSelectedCode = null;
 
             allowedValues.forEach((valObj, idx) => {
-              // 13pt line-height step per option row
-              const itemY = startY - 18 - (idx * 13);
+              const itemY = startY - 16 - (idx * 13);
               const valCode = String(valObj.code || valObj.value || `opt_${idx}`);
               const labelCode = String(valObj.code || valCode);
               const labelDesc = String(valObj.description || valObj.label || '');
 
-              // Place interactive AcroForm Radio Button box (8x8pt)
+              // Interactive Radio Button Box
               radioGroup.addOptionToPage(valCode, targetPage, {
                 x: startX,
                 y: itemY,
@@ -241,22 +227,22 @@ export default async function handler(req, res) {
                 borderColor: mainColor,
               });
 
-              // Draw Code Title (Bold, 8pt)
+              // Option Code Title
               targetPage.drawText(`${labelCode}:`, {
                 x: startX + 11,
                 y: itemY + 1,
-                size: 8,
+                size: 7.5,
                 font: notowebFontBold,
                 color: mainColor,
               });
 
-              // Draw Option Description (Regular, 8pt)
+              // Option Description Label
               if (labelDesc) {
-                const codeWidth = notowebFontBold.widthOfTextAtSize(`${labelCode}: `, 8);
+                const codeWidth = notowebFontBold.widthOfTextAtSize(`${labelCode}: `, 7.5);
                 targetPage.drawText(labelDesc, {
                   x: startX + 11 + codeWidth,
                   y: itemY + 1,
-                  size: 8,
+                  size: 7.5,
                   font: notowebFontReg,
                   color: mainColor,
                 });
@@ -273,7 +259,11 @@ export default async function handler(req, res) {
           }
         }
       });
-    }
+
+      // Advance Y downward dynamically based on the tallest category in this row
+      const dynamicRowHeight = 18 + (maxItemsInCurrentRow * 13) + 16;
+      currentY -= dynamicRowHeight;
+    });
 
     form.updateFieldAppearances(notowebFontBold);
     const pdfBytes = await pdfDoc.save();
