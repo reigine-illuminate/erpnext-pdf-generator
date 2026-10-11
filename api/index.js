@@ -10,10 +10,9 @@ export default async function handler(req, res) {
     const { html, configurator_options } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    // Ensure graphics mode is disabled for headless Linux environments
     chromium.setGraphicsMode = false;
 
-    // LAUNCH SERVERLESS HEADLESS BROWSER
+    // 1. RENDER BASE HTML TO PDF (Now without coordinate extraction)
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -24,66 +23,38 @@ export default async function handler(req, res) {
 
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
-
-    // EXTRACT DYNAMIC COORDINATES
-    const domCoords = await page.evaluate(() => {
-      const coords = [];
-      const items = document.querySelectorAll('[data-step]');
-      
-      items.forEach(item => {
-        const rect = item.getBoundingClientRect();
-        const pageWrapper = item.closest('.page-wrapper');
-        
-        let relativeTop = rect.top;
-        let relativeLeft = rect.left;
-        
-        // Measure coordinates relative to the specific printed page it lives on
-        if (pageWrapper) {
-          const wrapperRect = pageWrapper.getBoundingClientRect();
-          relativeTop = rect.top - wrapperRect.top;
-          relativeLeft = rect.left - wrapperRect.left;
-        }
-
-        coords.push({
-          step: item.getAttribute('data-step'),
-          code: item.getAttribute('data-code'),
-          x: (relativeLeft * 0.75) + 3,
-          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75) + 2
-        });
-      });
-      return coords;
-    });
-
     const pdfBuffer = await page.pdf({ 
       format: 'Letter', 
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 }
     });
-    
     await browser.close();
 
-    // PDF-LIB ACROFORM STAMPING
+    // 2. LOAD PDF-LIB FOR NATIVE DRAWING
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
+    const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    
     let customFont;
     try {
       const fontRes = await fetch('https://raw.githubusercontent.com/google/fonts/main/ofl/notoserif/NotoSerif-SemiBold.ttf');
       customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
     } catch (err) {
-      customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      customFont = helveticaBold;
     }
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
-    const targetPage = pages[pages.length - 1];
+    const targetPage = pages[pages.length - 1]; // Draw on the final page
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // HEADER FIELDS
+    // 3. HEADER TEXT INPUTS
     const headerConfigs = [
-      { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
-      { name: 'fixture_type', x: 265, y: 705, width: 130, height: 16 },
-      { name: 'project_location', x: 442, y: 705, width: 140, height: 16 }
+      { name: 'project_name', x: 69, y: 720, width: 120, height: 16 },
+      { name: 'fixture_type', x: 262, y: 720, width: 120, height: 16 },
+      { name: 'project_location', x: 432, y: 720, width: 120, height: 16 }
     ];
 
     headerConfigs.forEach(cfg => {
@@ -97,43 +68,105 @@ export default async function handler(req, res) {
       tf.setFontSize(10);
     });
 
-    // DYNAMIC RADIO BUTTONS OVERLAY
+    // 4. DEFINE HARDCODED GRID FOR CATEGORY STARTING POINTS
+    // Adjust these X/Y points to move entire columns
+    const layoutGrid = {
+      'WIRELESS PROTOCOL': { x: 36, y: 645 },
+      'ENVIRONMENT RATING': { x: 116, y: 645 },
+      'CCT': { x: 233, y: 645 },
+      'OUTPUT LEVEL': { x: 348, y: 645 },
+      'MOUNTING METHOD': { x: 432, y: 645 },
+      'FINISH': { x: 512, y: 645 },
+      // Row 2
+      'LENGTH': { x: 36, y: 460 },
+      'START FEED DIRECTION': { x: 116, y: 460 },
+      'START FEED LENGTH': { x: 216, y: 460 },
+      'END FEED DIRECTION': { x: 316, y: 460 },
+      'END FEED LENGTH': { x: 416, y: 460 }
+    };
+
+    // 5. DRAW THE NATIVE ORDERING SECTION
     if (Array.isArray(configurator_options)) {
       configurator_options.forEach((step) => {
-        const stepStr = String(step.option_step);
-        const stepName = `step_${stepStr}`;
-        const stepCoords = domCoords.filter(c => c.step === stepStr);
+        const optionLabel = (step.option_label || step.option_type || '').toUpperCase();
+        
+        // Find matching coordinate in the grid
+        let startX = 36;
+        let startY = 645;
+        for (const [key, coords] of Object.entries(layoutGrid)) {
+          if (optionLabel.includes(key)) {
+            startX = coords.x;
+            startY = coords.y;
+            break;
+          }
+        }
 
-        if (step.option_type === "Length" && stepCoords.length > 0) {
-          const lengthCoord = stepCoords[0];
+        const stepName = `step_${step.option_step}`;
+
+        // Draw Category Title
+        targetPage.drawText(optionLabel, {
+          x: startX,
+          y: startY,
+          size: 7,
+          font: helveticaBold,
+          color: textColor,
+        });
+
+        // Handle Length Text Box vs Radio Groups
+        if (step.option_type === "Length") {
           const lengthField = form.createTextField(stepName);
           lengthField.addToPage(targetPage, {
-            x: lengthCoord.x,
-            y: lengthCoord.y - 1,
+            x: startX,
+            y: startY - 20,
             width: 65, height: 14,
             borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
           lengthField.setFontSize(9);
-        } else if (stepCoords.length > 0) {
-          const radioGroup = form.createRadioGroup(stepName);
-          let defaultSelectedCode = null;
+          
+          targetPage.drawText("(inches)", {
+             x: startX, y: startY - 32, size: 7, font: helveticaFont, color: textColor 
+          });
 
+        } else {
           let allowedValues = [];
           try { allowedValues = typeof step.allowed_values_json === 'string' ? JSON.parse(step.allowed_values_json) : step.allowed_values_json; } catch(e){}
 
-          stepCoords.forEach((coord) => {
-            radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: 9, height: 9, borderWidth: 0.5, borderColor: textColor,
-            });
-          });
+          if (allowedValues.length > 0) {
+            const radioGroup = form.createRadioGroup(stepName);
+            let defaultSelectedCode = null;
 
-          allowedValues.forEach((valObj, idx) => {
-            if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
-              defaultSelectedCode = String(valObj.code || valObj.value);
+            allowedValues.forEach((valObj, idx) => {
+              const itemY = startY - 18 - (idx * 13); // Drop 18pt for title, then 13pt per row
+              const valCode = String(valObj.code || valObj.value || `opt_${idx}`);
+              const labelText = String(valObj.label || valCode);
+
+              // 1. Draw the visual text (e.g., "27K: 2700K")
+              targetPage.drawText(labelText, {
+                x: startX + 13, // Shift text right of the checkbox
+                y: itemY,
+                size: 7,
+                font: helveticaFont,
+                color: textColor,
+              });
+
+              // 2. Draw the interactive radio button right next to it
+              radioGroup.addOptionToPage(valCode, targetPage, {
+                x: startX,
+                y: itemY,
+                width: 9,
+                height: 9,
+                borderWidth: 0.5,
+                borderColor: textColor,
+              });
+
+              if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
+                defaultSelectedCode = valCode;
+              }
+            });
+
+            if (defaultSelectedCode) {
+              try { radioGroup.select(defaultSelectedCode); } catch(e){}
             }
-          });
-          if (defaultSelectedCode) {
-            try { radioGroup.select(defaultSelectedCode); } catch(e){}
           }
         }
       });
