@@ -1,166 +1,147 @@
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export default async function handler(req, res) {
-  // Only allow POST requests (like n8n sends)
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed. Use POST.' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
   try {
-    const { pdf_url, configurator_options } = req.body;
+    const { html, configurator_options } = req.body;
     
-    if (!pdf_url) {
-      return res.status(400).json({ error: 'Missing pdf_url in request body' });
-    }
+    if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    // 1. Fetch base PDF binary from Api2Pdf
-    const pdfRes = await fetch(pdf_url);
-    if (!pdfRes.ok) {
-      return res.status(400).json({ error: `Failed to fetch PDF: ${pdfRes.statusText}` });
-    }
-    const pdfBuffer = Buffer.from(await pdfRes.arrayBuffer());
+    // 1. LAUNCH SERVERLESS HEADLESS BROWSER
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      ignoreHTTPSErrors: true,
+    });
 
-    // 2. Load PDF into pdf-lib & register custom fontkit
+    const page = await browser.newPage();
+    
+    // 2. LOAD HTML & WAIT FOR FONTS/IMAGES TO RENDER
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    // 3. EXTRACT EXACT DYNAMIC COORDINATES FROM DOM
+    const domCoords = await page.evaluate(() => {
+      const coords = [];
+      // Select all elements that have our custom data-step attribute attached
+      const items = document.querySelectorAll('[data-step]');
+      
+      items.forEach(item => {
+        const rect = item.getBoundingClientRect();
+        // Convert CSS pixels to PDF Points (1 CSS px = 0.75 pt)
+        coords.push({
+          step: item.getAttribute('data-step'),
+          code: item.getAttribute('data-code'),
+          // X: Left edge + 3pt to center inside the Webflow square
+          x: (rect.left * 0.75) + 3,
+          // Y: Invert axis (792 is Letter height) and offset to center
+          y: 792 - (rect.top * 0.75) - (rect.height * 0.75) + 2
+        });
+      });
+      return coords;
+    });
+
+    // 4. SNAP THE BASE PDF
+    const pdfBuffer = await page.pdf({ 
+      format: 'Letter', 
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 }
+    });
+    
+    await browser.close();
+
+    // 5. LOAD INTO PDF-LIB FOR ACROFORM OVERLAYS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
     let customFont;
     try {
       const fontRes = await fetch('https://raw.githubusercontent.com/google/fonts/main/ofl/notoserif/NotoSerif-SemiBold.ttf');
-      const fontBytes = await fontRes.arrayBuffer();
-      customFont = await pdfDoc.embedFont(fontBytes);
+      customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
     } catch (err) {
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
     }
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
-    
-    // TARGET THE DYNAMIC LAST PAGE FOR CONFIGURATOR OPTIONS
-    const targetPage = pages[pages.length - 1]; 
-    const textColor = rgb(36 / 255, 36 / 255, 2 / 255); // #242402
+    const targetPage = pages[pages.length - 1]; // Order section is on the final page
+    const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // --- 3. HEADER TEXT INPUTS (SYNCED ACROSS ALL PAGES) ---
+    // --- HEADER TEXT INPUTS ---
     const headerConfigs = [
-      { name: 'project_name', x: 75, y: 720, width: 125, height: 16 },
-      { name: 'fixture_type', x: 262, y: 720, width: 122, height: 16 },
-      { name: 'project_location', x: 432, y: 720, width: 130, height: 16 }
-    ];
+      { name: 'project_name', x: 69, y: 720, width: 120, height: 16 },
+      { name: 'fixture_type', x: 262, y: 720, width: 120, height: 16 },
+      { name: 'project_location', x: 432, y: 720, width: 120, height: 16 }
+    ];
 
     headerConfigs.forEach(cfg => {
-      const textField = form.createTextField(cfg.name);
-      pages.forEach(page => {
-        textField.addToPage(page, {
-          x: cfg.x,
-          y: cfg.y,
-          width: cfg.width,
-          height: cfg.height,
-          borderWidth: 0,
-          backgroundColor: rgb(1, 1, 1),
-          textColor: textColor,
-          font: customFont,
+      const tf = form.createTextField(cfg.name);
+      pages.forEach(p => {
+        tf.addToPage(p, {
+          x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
+          borderWidth: 0, backgroundColor: rgb(1,1,1), textColor, font: customFont,
         });
       });
-      textField.setFontSize(10);
+      tf.setFontSize(10);
     });
 
-    // --- 4. CONFIGURATOR RADIO GROUPS ---
-    const columnXMap = {
-      'WIRELESS PROTOCOL': 36,
-      'ENVIRONMENT RATING': 116,
-      'CCT': 233,
-      'OUTPUT LEVEL': 348,
-      'MOUNTING METHOD': 432,
-      'FINISH': 512,
-      'START FEED DIRECTION': 116,
-      'START FEED LENGTH': 200,
-      'END FEED DIRECTION': 233,
-      'END FEED LENGTH': 315
-    };
+    // --- DYNAMIC RADIO BUTTONS OVERLAY ---
+    if (Array.isArray(configurator_options)) {
+      configurator_options.forEach((step) => {
+        const stepStr = String(step.option_step);
+        const stepName = `step_${stepStr}`;
 
-    if (Array.isArray(configurator_options) && configurator_options.length > 0) {
-      const sortedSteps = configurator_options.sort((a, b) => a.option_step - b.option_step);
+        // Get coordinates extracted specifically for this step
+        const stepCoords = domCoords.filter(c => c.step === stepStr);
 
-      sortedSteps.forEach((step) => {
-        const stepName = `step_${step.option_step}`;
-        const optionType = (step.option_type || '').toUpperCase();
-        const optionLabel = (step.option_label || '').toUpperCase();
-
-        const isRow2 = optionType.includes('FEED') || optionType === 'LENGTH';
-        const rowStartY = isRow2 ? 460 : 650; 
-        
-        let anchorX = 36;
-        for (const [key, xVal] of Object.entries(columnXMap)) {
-          if (optionType.includes(key) || optionLabel.includes(key)) {
-            anchorX = xVal;
-            break;
-          }
-        }
-
-        let allowedValues = [];
-        try {
-          allowedValues = typeof step.allowed_values_json === 'string' 
-            ? JSON.parse(step.allowed_values_json) 
-            : (step.allowed_values_json || []);
-        } catch (e) {
-          allowedValues = [];
-        }
-
-        if (step.option_type === "Length") {
+        if (step.option_type === "Length" && stepCoords.length > 0) {
+          const lengthCoord = stepCoords[0];
           const lengthField = form.createTextField(stepName);
           lengthField.addToPage(targetPage, {
-            x: 36,
-            y: 460,
-            width: 65,
-            height: 14,
-            borderWidth: 0.5,
-            borderColor: textColor,
-            textColor: textColor,
-            font: customFont,
+            x: lengthCoord.x,
+            y: lengthCoord.y - 1, // Slight visual adjustment
+            width: 65, height: 14,
+            borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
           lengthField.setFontSize(9);
-        } else if (allowedValues.length > 0) {
+        } else if (stepCoords.length > 0) {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
-          allowedValues.forEach((valObj, valIdx) => {
-            const itemY = rowStartY - (valIdx * 13);
-            const valCode = String(valObj.code || valObj.value || `opt_${valIdx}`);
+          let allowedValues = [];
+          try { allowedValues = typeof step.allowed_values_json === 'string' ? JSON.parse(step.allowed_values_json) : step.allowed_values_json; } catch(e){}
 
-            radioGroup.addOptionToPage(valCode, targetPage, {
-              x: anchorX,
-              y: itemY,
-              width: 9,
-              height: 9,
-              borderWidth: 0.5,
-              borderColor: textColor,
+          stepCoords.forEach((coord) => {
+            radioGroup.addOptionToPage(coord.code, targetPage, {
+              x: coord.x, y: coord.y, width: 9, height: 9, borderWidth: 0.5, borderColor: textColor,
             });
-
-            if ((valObj.is_default === 1 || valIdx === 0) && !defaultSelectedCode) {
-              defaultSelectedCode = valCode;
-            }
           });
 
+          // Select Default
+          allowedValues.forEach((valObj, idx) => {
+            if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
+              defaultSelectedCode = String(valObj.code || valObj.value);
+            }
+          });
           if (defaultSelectedCode) {
-            try {
-              radioGroup.select(defaultSelectedCode);
-            } catch (err) {}
+            try { radioGroup.select(defaultSelectedCode); } catch(e){}
           }
         }
       });
     }
 
     form.updateFieldAppearances(customFont);
-
-    // 5. Save and return modified Base64
     const pdfBytes = await pdfDoc.save();
-    const outputBase64 = Buffer.from(pdfBytes).toString('base64');
-
-    return res.status(200).json({ pdf_base64: outputBase64 });
+    
+    return res.status(200).json({ pdf_base64: Buffer.from(pdfBytes).toString('base64') });
     
   } catch (error) {
-    console.error('PDF Generation Error:', error);
-    return res.status(500).json({ error: 'Internal Server Error', details: error.message });
+    console.error('Render Error:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
