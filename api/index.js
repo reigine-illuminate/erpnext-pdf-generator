@@ -29,13 +29,26 @@ export default async function handler(req, res) {
     const domCoords = await page.evaluate(() => {
       const coords = [];
       const items = document.querySelectorAll('[data-step]');
+      
       items.forEach(item => {
         const rect = item.getBoundingClientRect();
+        const pageWrapper = item.closest('.page-wrapper');
+        
+        let relativeTop = rect.top;
+        let relativeLeft = rect.left;
+        
+        // Measure coordinates relative to the specific printed page it lives on
+        if (pageWrapper) {
+          const wrapperRect = pageWrapper.getBoundingClientRect();
+          relativeTop = rect.top - wrapperRect.top;
+          relativeLeft = rect.left - wrapperRect.left;
+        }
+
         coords.push({
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
-          x: (rect.left * 0.75) + 3,
-          y: 792 - (rect.top * 0.75) - (rect.height * 0.75) + 2
+          x: (relativeLeft * 0.75) + 3,
+          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75) + 2
         });
       });
       return coords;
