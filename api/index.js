@@ -8,10 +8,12 @@ export default async function handler(req, res) {
 
   try {
     const { html, configurator_options } = req.body;
-    
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    // 1. LAUNCH SERVERLESS HEADLESS BROWSER
+    // Ensure graphics mode is disabled for headless Linux environments
+    chromium.setGraphicsMode = false;
+
+    // LAUNCH SERVERLESS HEADLESS BROWSER
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -21,32 +23,24 @@ export default async function handler(req, res) {
     });
 
     const page = await browser.newPage();
-    
-    // 2. LOAD HTML & WAIT FOR FONTS/IMAGES TO RENDER
     await page.setContent(html, { waitUntil: 'networkidle0' });
 
-    // 3. EXTRACT EXACT DYNAMIC COORDINATES FROM DOM
+    // EXTRACT DYNAMIC COORDINATES
     const domCoords = await page.evaluate(() => {
       const coords = [];
-      // Select all elements that have our custom data-step attribute attached
       const items = document.querySelectorAll('[data-step]');
-      
       items.forEach(item => {
         const rect = item.getBoundingClientRect();
-        // Convert CSS pixels to PDF Points (1 CSS px = 0.75 pt)
         coords.push({
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
-          // X: Left edge + 3pt to center inside the Webflow square
           x: (rect.left * 0.75) + 3,
-          // Y: Invert axis (792 is Letter height) and offset to center
           y: 792 - (rect.top * 0.75) - (rect.height * 0.75) + 2
         });
       });
       return coords;
     });
 
-    // 4. SNAP THE BASE PDF
     const pdfBuffer = await page.pdf({ 
       format: 'Letter', 
       printBackground: true,
@@ -55,7 +49,7 @@ export default async function handler(req, res) {
     
     await browser.close();
 
-    // 5. LOAD INTO PDF-LIB FOR ACROFORM OVERLAYS
+    // PDF-LIB ACROFORM STAMPING
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
@@ -69,10 +63,10 @@ export default async function handler(req, res) {
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
-    const targetPage = pages[pages.length - 1]; // Order section is on the final page
+    const targetPage = pages[pages.length - 1];
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // --- HEADER TEXT INPUTS ---
+    // HEADER FIELDS
     const headerConfigs = [
       { name: 'project_name', x: 69, y: 720, width: 120, height: 16 },
       { name: 'fixture_type', x: 262, y: 720, width: 120, height: 16 },
@@ -90,13 +84,11 @@ export default async function handler(req, res) {
       tf.setFontSize(10);
     });
 
-    // --- DYNAMIC RADIO BUTTONS OVERLAY ---
+    // DYNAMIC RADIO BUTTONS OVERLAY
     if (Array.isArray(configurator_options)) {
       configurator_options.forEach((step) => {
         const stepStr = String(step.option_step);
         const stepName = `step_${stepStr}`;
-
-        // Get coordinates extracted specifically for this step
         const stepCoords = domCoords.filter(c => c.step === stepStr);
 
         if (step.option_type === "Length" && stepCoords.length > 0) {
@@ -104,7 +96,7 @@ export default async function handler(req, res) {
           const lengthField = form.createTextField(stepName);
           lengthField.addToPage(targetPage, {
             x: lengthCoord.x,
-            y: lengthCoord.y - 1, // Slight visual adjustment
+            y: lengthCoord.y - 1,
             width: 65, height: 14,
             borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
@@ -122,7 +114,6 @@ export default async function handler(req, res) {
             });
           });
 
-          // Select Default
           allowedValues.forEach((valObj, idx) => {
             if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
               defaultSelectedCode = String(valObj.code || valObj.value);
