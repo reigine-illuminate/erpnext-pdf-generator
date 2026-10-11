@@ -12,7 +12,7 @@ export default async function handler(req, res) {
 
     chromium.setGraphicsMode = false;
 
-    // 1. LAUNCH SERVERLESS HEADLESS BROWSER
+    // 1. LAUNCH SERVERLESS BROWSER
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -24,51 +24,43 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
 
-    // 2. EXTRACT RELATIVE OFFSETS USING #spec-section-ordering AS ANCHOR
-    const extractionResult = await page.evaluate(() => {
-      const anchor = document.querySelector('#spec-section-ordering');
-      if (!anchor) return { error: 'Missing #spec-section-ordering anchor' };
-
-      const anchorRect = anchor.getBoundingClientRect();
-      const pageWrapper = anchor.closest('.page-wrapper');
-      
-      // Calculate anchor position relative to its containing printed PDF page wrapper
-      let anchorPageTop = anchorRect.top;
-      let anchorPageLeft = anchorRect.left;
-
-      if (pageWrapper) {
-        const wrapperRect = pageWrapper.getBoundingClientRect();
-        anchorPageTop = anchorRect.top - wrapperRect.top;
-        anchorPageLeft = anchorRect.left - wrapperRect.left;
-      }
-
-      // PDF Letter height = 792 points. Convert CSS px (96 DPI) to PDF points (72 DPI) -> 1 CSS px = 0.75 pt
-      const anchorPdfX = anchorPageLeft * 0.75;
-      const anchorPdfY = 792 - (anchorPageTop * 0.75);
-
+    // 2. EXTRACT EXACT COORDINATES FOR EVERY INDIVIDUAL CHECKBOX
+    const domCoords = await page.evaluate(() => {
       const items = document.querySelectorAll('[data-step]');
       const coords = [];
+      const allWrappers = Array.from(document.querySelectorAll('.page-wrapper'));
 
       items.forEach(item => {
-        const itemRect = item.getBoundingClientRect();
+        // Target the physical square itself to bypass all padding math entirely!
+        const chkbx = item.querySelector('.ordering-code-chkbx');
+        const targetElement = chkbx ? chkbx : item;
         
-        // Measure delta offset relative to the anchor box
-        const deltaX = (itemRect.left - anchorRect.left) * 0.75;
-        const deltaY = (itemRect.top - anchorRect.top) * 0.75;
+        const rect = targetElement.getBoundingClientRect();
+        const pageWrapper = targetElement.closest('.page-wrapper');
+        
+        if (!pageWrapper) return;
+        
+        const pageIndex = allWrappers.indexOf(pageWrapper);
+        const wrapperRect = pageWrapper.getBoundingClientRect();
+
+        // Calculate exact distance from the top-left corner of the printed page
+        const relativeLeft = rect.left - wrapperRect.left;
+        const relativeTop = rect.top - wrapperRect.top;
 
         coords.push({
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
-          // Final PDF point = Anchor baseline + internal offset
-          x: anchorPdfX + deltaX + 2, // +2pt fine nudge to center inside square
-          y: anchorPdfY - deltaY - (itemRect.height * 0.75) + 1
+          pageIndex: pageIndex !== -1 ? pageIndex : allWrappers.length - 1,
+          x: relativeLeft * 0.75, // 1px CSS = 0.75 PDF pt
+          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
+          width: rect.width * 0.75,
+          height: rect.height * 0.75
         });
       });
-
-      return { anchorPdfX, anchorPdfY, coords };
+      return coords;
     });
 
-    // 3. SNAP BASE PDF (100% Webflow styling, fonts, and layout)
+    // 3. SNAP BASE PDF
     const pdfBuffer = await page.pdf({ 
       format: 'Letter', 
       printBackground: true,
@@ -91,7 +83,6 @@ export default async function handler(req, res) {
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
-    const targetPage = pages[pages.length - 1]; // Ordering section is on the final page
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
     // --- A. HEADER TEXT INPUTS ---
@@ -113,17 +104,19 @@ export default async function handler(req, res) {
     });
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
-    const domCoords = extractionResult.coords || [];
-
     if (Array.isArray(configurator_options)) {
       configurator_options.forEach((step) => {
         const stepStr = String(step.option_step);
         const stepName = `step_${stepStr}`;
         const stepCoords = domCoords.filter(c => c.step === stepStr);
 
-        if (step.option_type === "Length" && stepCoords.length > 0) {
+        if (stepCoords.length === 0) return;
+
+        if (step.option_type === "Length") {
           const lengthCoord = stepCoords[0];
+          const targetPage = pages[lengthCoord.pageIndex] || pages[pages.length - 1];
           const lengthField = form.createTextField(stepName);
+          
           lengthField.addToPage(targetPage, {
             x: lengthCoord.x,
             y: lengthCoord.y - 1,
@@ -131,16 +124,24 @@ export default async function handler(req, res) {
             borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
           lengthField.setFontSize(9);
-        } else if (stepCoords.length > 0) {
+          
+        } else {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
           let allowedValues = [];
           try { allowedValues = typeof step.allowed_values_json === 'string' ? JSON.parse(step.allowed_values_json) : step.allowed_values_json; } catch(e){}
 
+          // Stamp the radio buttons exactly over the Webflow CSS squares
           stepCoords.forEach((coord) => {
+            const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: 8, height: 8, borderWidth: 0.5, borderColor: textColor,
+              x: coord.x, 
+              y: coord.y, 
+              width: coord.width || 8, 
+              height: coord.height || 8, 
+              borderWidth: 0.5, 
+              borderColor: textColor,
             });
           });
 
