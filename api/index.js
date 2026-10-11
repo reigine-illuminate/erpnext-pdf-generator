@@ -68,9 +68,9 @@ export default async function handler(req, res) {
 
     // HEADER FIELDS
     const headerConfigs = [
-      { name: 'project_name', x: 79, y: 715, width: 125, height: 16 },
-      { name: 'fixture_type', x: 265, y: 715, width: 125, height: 16 },
-      { name: 'project_location', x: 442, y: 715, width: 130, height: 16 }
+      { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
+      { name: 'fixture_type', x: 265, y: 705, width: 130, height: 16 },
+      { name: 'project_location', x: 442, y: 705, width: 140, height: 16 }
     ];
 
     headerConfigs.forEach(cfg => {
