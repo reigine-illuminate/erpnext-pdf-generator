@@ -144,8 +144,8 @@ export default async function handler(req, res) {
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: coord.x, 
               y: coord.y, 
-              width: coord.width || 9, 
-              height: coord.height || 9, 
+              width: coord.width || 8, 
+              height: coord.height || 8, 
               borderWidth: 0, 
               borderColor: textColor,
             });
