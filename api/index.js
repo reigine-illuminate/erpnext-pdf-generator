@@ -24,6 +24,11 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
 
+    // 🐛 FIX: Force exact 8.5x11in viewport and Print CSS BEFORE measuring!
+    // 8.5in * 96dpi = 816px width. 11in * 96dpi = 1056px height.
+    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 1 });
+    await page.emulateMediaType('print');
+
     // 2. EXTRACT EXACT COORDINATES FOR EVERY INDIVIDUAL CHECKBOX
     const domCoords = await page.evaluate(() => {
       const items = document.querySelectorAll('[data-step]');
@@ -31,7 +36,7 @@ export default async function handler(req, res) {
       const allWrappers = Array.from(document.querySelectorAll('.page-wrapper'));
 
       items.forEach(item => {
-        // Target the physical square itself to bypass all padding math entirely!
+        // Target the physical square itself to bypass all padding math entirely
         const chkbx = item.querySelector('.ordering-code-chkbx');
         const targetElement = chkbx ? chkbx : item;
         
@@ -60,11 +65,12 @@ export default async function handler(req, res) {
       return coords;
     });
 
-    // 3. SNAP BASE PDF
+    // 3. SNAP BASE PDF (Now perfectly matches coordinate extraction layout)
     const pdfBuffer = await page.pdf({ 
       format: 'Letter', 
       printBackground: true,
-      margin: { top: 0, right: 0, bottom: 0, left: 0 }
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true
     });
     
     await browser.close();
@@ -138,8 +144,8 @@ export default async function handler(req, res) {
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: coord.x, 
               y: coord.y, 
-              width: coord.width || 8, 
-              height: coord.height || 8, 
+              width: coord.width || 9, 
+              height: coord.height || 9, 
               borderWidth: 0.5, 
               borderColor: textColor,
             });
