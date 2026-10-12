@@ -250,7 +250,7 @@ export default async function handler(req, res) {
         for (var i = 0; i < steps.length; i++) {
           var f = this.getField(steps[i].stepName);
           if (f) {
-            var val = f.valueAsString;
+            var val = f.value; // Use f.value instead of valueAsString
             if (val && val !== "Off" && val !== "") {
               var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
               var isLen = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Length") !== -1;
@@ -269,7 +269,6 @@ export default async function handler(req, res) {
         event.value = segments.join('-');
       `;
 
-      // 🐛 FIX: Add `Type: 'Action'` so Acrobat strictly respects the Calculate event
       orderingCodeField.acroField.dict.set(
         PDFName.of('AA'),
         pdfDoc.context.obj({
@@ -281,8 +280,17 @@ export default async function handler(req, res) {
         })
       );
       
-      // Make the ordering code box read-only so users don't type over the calculation
       orderingCodeField.enableReadOnly();
+
+      // 4. 🐛 THE FIX: Register field in Acrobat's Calculation Order (CO) array
+      // Adobe Acrobat WILL NOT run the calculation automatically unless it is registered here!
+      const acroFormDict = form.acroForm.dict;
+      let coArray = acroFormDict.lookup(PDFName.of('CO'));
+      if (!coArray) {
+        coArray = pdfDoc.context.obj([]);
+        acroFormDict.set(PDFName.of('CO'), coArray);
+      }
+      coArray.push(orderingCodeField.acroField.ref);
     }
 
     form.updateFieldAppearances(customFont);
