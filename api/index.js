@@ -201,7 +201,7 @@ export default async function handler(req, res) {
       
       orderingCodeField.addToPage(targetPage, {
         x: codeBox.x,
-        y: codeBox.y - 1,
+        y: codeBox.y + 1,
         width: codeBox.width,
         height: codeBox.height - 2.5,
         font: customFont,
