@@ -215,15 +215,15 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
+      orderingCodeField.enableReadOnly();
 
-      // 1. Sort the options precisely by their display step
       const acroSteps = configurator_options.map(s => ({
         stepName: 'step_' + s.option_step,
         type: s.option_type,
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      // 2. Pre-calculate the initial default value so the PDF opens fully populated
+      // 1. Pre-calculate the initial default value
       let initialSegments = [];
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
@@ -247,7 +247,7 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 3. Acrobat JavaScript Engine (Runs every time a radio button is clicked)
+      // 2. The JavaScript Engine (Updated to push the value to the SpecOrderingCode field)
       const acroCalcScript = `
         var steps = ${JSON.stringify(acroSteps)};
         var segments = [];
@@ -256,7 +256,7 @@ export default async function handler(req, res) {
         for (var i = 0; i < steps.length; i++) {
           var f = this.getField(steps[i].stepName);
           if (f) {
-            var val = f.value; // Use f.value instead of valueAsString
+            var val = f.value;
             if (val && val !== "Off" && val !== "") {
               var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
               var isLen = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Length") !== -1;
@@ -272,31 +272,27 @@ export default async function handler(req, res) {
             }
           }
         }
-        event.value = segments.join('-');
+        var targetField = this.getField("SpecOrderingCode");
+        if (targetField) targetField.value = segments.join('-');
       `;
 
-      orderingCodeField.acroField.dict.set(
-        PDFName.of('AA'),
-        pdfDoc.context.obj({
-          C: {
-            Type: 'Action',
-            S: 'JavaScript',
-            JS: acroCalcScript
-          }
-        })
-      );
-      
-      orderingCodeField.enableReadOnly();
-
-      // 4. 🐛 THE FIX: Register field in Acrobat's Calculation Order (CO) array
-      // Adobe Acrobat WILL NOT run the calculation automatically unless it is registered here!
-      const acroFormDict = form.acroForm.dict;
-      let coArray = acroFormDict.lookup(PDFName.of('CO'));
-      if (!coArray) {
-        coArray = pdfDoc.context.obj([]);
-        acroFormDict.set(PDFName.of('CO'), coArray);
-      }
-      coArray.push(orderingCodeField.acroField.ref);
+      // 3. Bind the script directly to every individual Radio Group's "Validate" event
+      // This bypasses Acrobat's Calculation Order array and forces Chrome to run the script on click!
+      acroSteps.forEach(step => {
+        let field = form.getField(step.stepName);
+        if (field) {
+          field.acroField.dict.set(
+            PDFName.of('AA'),
+            pdfDoc.context.obj({
+              V: {
+                Type: 'Action',
+                S: 'JavaScript',
+                JS: acroCalcScript
+              }
+            })
+          );
+        }
+      });
     }
 
     form.updateFieldAppearances(customFont);
