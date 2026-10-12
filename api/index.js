@@ -196,7 +196,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR (CHROME FRIENDLY) ---
+    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR (BULLETPROOF) ---
     const codeBox = domExtraction.codeBoxCoords;
     if (codeBox && Array.isArray(configurator_options)) {
       const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
@@ -212,7 +212,7 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
-      // Removed .enableReadOnly() to allow Chrome to visually repaint the field
+      // NOTE: Intentionally leaving off .enableReadOnly() for visual repainting in Chrome
 
       // 1. Sort steps by index
       const acroSteps = configurator_options.map(s => ({
@@ -221,7 +221,7 @@ export default async function handler(req, res) {
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      // 2. Pre-calculate the initial default value in Node.js
+      // 2. Pre-calculate the initial default value on generation
       let initialSegments = [];
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
@@ -245,12 +245,12 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 3. Flatten metadata into simple arrays for Chrome's weak JS engine
+      // 3. Flatten metadata for Chrome's weak AcroJS engine (Mirroring Astralux structure)
       const stepNames = acroSteps.map(s => s.stepName);
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
       const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      // 4. The Chrome-safe JavaScript Engine (Mirrors Astralux structure)
+      // 4. The Unified JavaScript Engine
       const acroCalcScript = `
         var fields = ${JSON.stringify(stepNames)};
         var isDir = ${JSON.stringify(isDirFlags)};
@@ -274,14 +274,48 @@ export default async function handler(req, res) {
         event.value = segments.join('-');
       `;
 
-      // 5. Bind ONLY to the Calculate event of the Text Box
+      // 5. Bind the script to the Calculate (C) event of the Text Box
+      const calcAction = pdfDoc.context.obj({
+        Type: 'Action',
+        S: 'JavaScript',
+        JS: acroCalcScript
+      });
+
       orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-        C: {
-          Type: 'Action',
-          S: 'JavaScript',
-          JS: acroCalcScript
-        }
+        C: calcAction 
       }));
+
+      // 6. CRITICAL FIX: Register field in the Document Calculation Order (CO) array
+      // This explicitly tells Adobe Acrobat's engine that this field requires calculation
+      form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([ orderingCodeField.ref ]));
+
+      // 7. Force Google Chrome / PDFium to recalculate upon user interaction
+      const forceCalcAction = pdfDoc.context.obj({
+        Type: 'Action',
+        S: 'JavaScript',
+        JS: 'this.calculateNow();'
+      });
+
+      const allFields = form.getFields();
+      allFields.forEach(field => {
+        if (field.getName() === 'SpecOrderingCode') return; // Skip the target itself
+        
+        const widgets = field.acroField.getWidgets();
+        widgets.forEach(widget => {
+          let aa = widget.dict.get(PDFName.of('AA'));
+          if (!aa) {
+            aa = pdfDoc.context.obj({});
+            widget.dict.set(PDFName.of('AA'), aa);
+          }
+          
+          // Radios/Checkboxes trigger on MouseUp (U), Text Inputs trigger on Blur (Bl)
+          if (field.constructor.name === 'PDFRadioGroup' || field.constructor.name === 'PDFCheckBox') {
+            aa.set(PDFName.of('U'), forceCalcAction); 
+          } else {
+            aa.set(PDFName.of('Bl'), forceCalcAction);
+          }
+        });
+      });
     }
 
     form.updateFieldAppearances(customFont);
