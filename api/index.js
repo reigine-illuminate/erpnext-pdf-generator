@@ -247,7 +247,7 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 2. The JavaScript Engine (Updated to push the value to the SpecOrderingCode field)
+      // 2. The JavaScript Engine (Now intercepts the new value instantly)
       const acroCalcScript = `
         var steps = ${JSON.stringify(acroSteps)};
         var segments = [];
@@ -256,7 +256,10 @@ export default async function handler(req, res) {
         for (var i = 0; i < steps.length; i++) {
           var f = this.getField(steps[i].stepName);
           if (f) {
-            var val = f.value;
+            // 🐛 FIX: If this is the field that was just clicked, grab the new incoming event.value. 
+            // Otherwise, grab the existing f.value.
+            var val = (event.target !== null && f.name === event.target.name) ? event.value : f.value;
+            
             if (val && val !== "Off" && val !== "") {
               var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
               var isLen = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Length") !== -1;
@@ -277,7 +280,6 @@ export default async function handler(req, res) {
       `;
 
       // 3. Bind the script directly to every individual Radio Group's "Validate" event
-      // This bypasses Acrobat's Calculation Order array and forces Chrome to run the script on click!
       acroSteps.forEach(step => {
         let field = form.getField(step.stepName);
         if (field) {
