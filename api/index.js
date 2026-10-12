@@ -196,7 +196,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR ---
+    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR (CHROME FRIENDLY) ---
     const codeBox = domExtraction.codeBoxCoords;
     if (codeBox && Array.isArray(configurator_options)) {
       const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
@@ -212,13 +212,16 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
+      // Removed .enableReadOnly() to allow Chrome to visually repaint the field
 
+      // 1. Sort steps by index
       const acroSteps = configurator_options.map(s => ({
         stepName: 'step_' + s.option_step,
         type: s.option_type,
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
+      // 2. Pre-calculate the initial default value in Node.js
       let initialSegments = [];
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
@@ -242,64 +245,43 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // THE FIX: Universal Javascript bound explicitly to interaction events
+      // 3. Flatten metadata into simple arrays for Chrome's weak JS engine
+      const stepNames = acroSteps.map(s => s.stepName);
+      const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
+      const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
+
+      // 4. The Chrome-safe JavaScript Engine (Mirrors Astralux structure)
       const acroCalcScript = `
-        var steps = ${JSON.stringify(acroSteps)};
+        var fields = ${JSON.stringify(stepNames)};
+        var isDir = ${JSON.stringify(isDirFlags)};
+        var isLen = ${JSON.stringify(isLenFlags)};
         var segments = [];
         var dirVal = "";
         
-        for (var i = 0; i < steps.length; i++) {
-          var f = this.getField(steps[i].stepName);
-          if (f) {
-            var val = f.value;
-            
-            if (val && val !== "Off" && val !== "") {
-              var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
-              var isLen = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Length") !== -1;
-              
-              if (isDir) {
-                dirVal = val;
-              } else if (isLen) {
-                segments.push(dirVal + val);
-                dirVal = "";
-              } else {
-                segments.push(val);
-              }
+        for (var i = 0; i < fields.length; i++) {
+          var f = this.getField(fields[i]);
+          if (f && f.value !== "Off" && f.value !== "") {
+            if (isDir[i]) {
+              dirVal = f.value;
+            } else if (isLen[i]) {
+              segments.push(dirVal + f.value);
+              dirVal = "";
+            } else {
+              segments.push(f.value);
             }
           }
         }
-        var targetField = this.getField("SpecOrderingCode");
-        if (targetField) {
-            targetField.value = segments.join('-');
-        }
+        event.value = segments.join('-');
       `;
 
-      const calcAction = pdfDoc.context.obj({
-        Type: 'Action',
-        S: 'JavaScript',
-        JS: acroCalcScript
-      });
-
-      // Bind to Calculate event (Native standard for Acrobat)
+      // 5. Bind ONLY to the Calculate event of the Text Box
       orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-        C: calcAction 
-      }));
-
-      // Bind to MouseUp and Blur events of EVERY radio/checkbox (Forces execution in Chrome/PDFium)
-      const fields = form.getFields();
-      fields.forEach(field => {
-        if (field.constructor.name === 'PDFRadioGroup' || field.constructor.name === 'PDFCheckBox') {
-          const widgets = field.acroField.getWidgets();
-          widgets.forEach(widget => {
-            // Overwrites the AA dictionary on the widget layer, explicitly mapping the calculation
-            // to run exactly when the user finishes clicking (U = MouseUp, Bl = Blur)
-            widget.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-              U: calcAction,
-              Bl: calcAction
-            }));
-          });
+        C: {
+          Type: 'Action',
+          S: 'JavaScript',
+          JS: acroCalcScript
         }
-      });
+      }));
     }
 
     form.updateFieldAppearances(customFont);
