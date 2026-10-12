@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
-import { PDFDocument, rgb, StandardFonts, PDFName } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export default async function handler(req, res) {
@@ -252,49 +252,41 @@ export default async function handler(req, res) {
 
       // 4. The Unified JavaScript Engine
       const acroCalcScript = `
-        var fields = ${JSON.stringify(stepNames)};
-        var isDir = ${JSON.stringify(isDirFlags)};
-        var isLen = ${JSON.stringify(isLenFlags)};
-        var segments = [];
-        var dirVal = "";
-        
-        for (var i = 0; i < fields.length; i++) {
-          var f = this.getField(fields[i]);
-          if (f && f.value !== "Off" && f.value !== "") {
-            if (isDir[i]) {
-              dirVal = f.value;
-            } else if (isLen[i]) {
-              segments.push(dirVal + f.value);
-              dirVal = "";
-            } else {
-              segments.push(f.value);
-            }
-          }
-        }
-        event.value = segments.join('-');
-      `;
+try {
+  var fields = ${JSON.stringify(stepNames)};
+  var isDir = ${JSON.stringify(isDirFlags)};
+  var isLen = ${JSON.stringify(isLenFlags)};
+  var segments = [];
+  var dirVal = "";
+  for (var i = 0; i < fields.length; i++) {
+    var f = this.getField(fields[i]);
+    var v = f ? f.value : "";
+    if (v && v !== "Off") {
+      if (isDir[i]) { dirVal = v; }
+      else if (isLen[i]) { segments.push(dirVal + v); dirVal = ""; }
+      else { segments.push(v); }
+    }
+  }
+  event.value = segments.join("-");
+} catch (e) {}
+`;
 
       // 5. Bind the script to the Calculate (C) event of the Text Box
-      const calcAction = pdfDoc.context.obj({
-        Type: 'Action',
-        S: 'JavaScript',
-        JS: acroCalcScript
-      });
+      const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
+  S: 'JavaScript',
+  JS: PDFHexString.fromText(acroCalcScript),
+}));
 
-      orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-        C: calcAction 
-      }));
+const aaDict = pdfDoc.context.obj({ C: calcAction });
+orderingCodeField.acroField.dict.set(PDFName.of('AA'), aaDict);
+orderingCodeField.acroField.getWidgets().forEach(w =>
+  w.dict.set(PDFName.of('AA'), aaDict));
 
-      // 6. CRITICAL FIX: Register field in the Document Calculation Order (CO) array
-      // This explicitly tells Adobe Acrobat's engine that this field requires calculation
-      form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([ orderingCodeField.ref ]));
-
-      // 7. Force Google Chrome / PDFium to recalculate upon user interaction
-      const forceCalcAction = pdfDoc.context.obj({
-        Type: 'Action',
-        S: 'JavaScript',
-        JS: 'this.calculateNow();'
-      });
+form.acroForm.dict.set(
+  PDFName.of('CO'),
+  pdfDoc.context.obj([orderingCodeField.acroField.ref])
+);
+form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
 
       const allFields = form.getFields();
       allFields.forEach(field => {
