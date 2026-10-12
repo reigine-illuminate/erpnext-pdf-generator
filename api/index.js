@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString } from 'pdf-lib';
@@ -45,12 +47,12 @@ export default async function handler(req, res) {
       items.forEach(item => {
         const chkbx = item.querySelector('.ordering-code-chkbx');
         const targetElement = chkbx ? chkbx : item;
-        
+
         const rect = targetElement.getBoundingClientRect();
         const pageWrapper = targetElement.closest('.page-wrapper');
-        
+
         if (!pageWrapper) return;
-        
+
         const pageIndex = wrappers.indexOf(pageWrapper);
         const wrapperRect = pageWrapper.getBoundingClientRect();
 
@@ -61,7 +63,7 @@ export default async function handler(req, res) {
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-          x: relativeLeft * 0.75, 
+          x: relativeLeft * 0.75,
           y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
           width: rect.width * 0.75,
           height: rect.height * 0.75
@@ -77,7 +79,7 @@ export default async function handler(req, res) {
         if (pageWrapper) {
           const wrapperRect = pageWrapper.getBoundingClientRect();
           const pageIndex = wrappers.indexOf(pageWrapper);
-          
+
           codeBoxCoords = {
             pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
             x: (rect.left - wrapperRect.left) * 0.75,
@@ -85,7 +87,7 @@ export default async function handler(req, res) {
             width: rect.width * 0.75,
             height: rect.height * 0.75
           };
-          
+
           // Hide text so pdf-lib field can overlay cleanly
           codeBox.style.color = 'transparent';
           codeBox.style.background = 'transparent';
@@ -96,25 +98,27 @@ export default async function handler(req, res) {
       return { coords, codeBoxCoords };
     });
 
-    // 3. SNAP BASE PDF 
-    const pdfBuffer = await page.pdf({ 
-      format: 'Letter', 
+    // 3. SNAP BASE PDF
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true
     });
-    
+
     await browser.close();
 
     // 4. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
+    // Font is bundled in the repo at /fonts/Lora-Bold.ttf (see vercel.json includeFiles).
+    // subset:false embeds every glyph so text produced later by the calculate script always renders.
     let customFont;
     try {
-      const fontRes = await fetch('https://raw.githubusercontent.com/googlefonts/lora/main/fonts/ttf/Lora-Bold.ttf');
-      if (!fontRes.ok) throw new Error("Font fetch failed");
-      customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
+      const fontPath = path.join(process.cwd(), 'fonts', 'Lora-Bold.ttf');
+      const fontBytes = fs.readFileSync(fontPath);
+      customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
       console.log('Falling back to built-in Times Roman:', err);
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
@@ -136,7 +140,7 @@ export default async function handler(req, res) {
       pages.forEach(p => {
         tf.addToPage(p, {
           x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-          borderWidth: 0, backgroundColor: rgb(1,1,1), textColor, font: customFont,
+          borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: customFont,
         });
       });
       tf.setFontSize(10);
@@ -144,7 +148,7 @@ export default async function handler(req, res) {
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
-    
+
     if (Array.isArray(configurator_options)) {
       configurator_options.forEach((step) => {
         const stepStr = String(step.option_step);
@@ -157,7 +161,7 @@ export default async function handler(req, res) {
           const lengthCoord = stepCoords[0];
           const targetPage = pages[lengthCoord.pageIndex] || pages[pages.length - 1];
           const lengthField = form.createTextField(stepName);
-          
+
           lengthField.addToPage(targetPage, {
             x: lengthCoord.x,
             y: lengthCoord.y - 1,
@@ -165,19 +169,24 @@ export default async function handler(req, res) {
             borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
           lengthField.setFontSize(9);
-          
+
         } else {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
           let allowedValues = [];
-          try { allowedValues = typeof step.allowed_values_json === 'string' ? JSON.parse(step.allowed_values_json) : step.allowed_values_json; } catch(e){}
+          try {
+            allowedValues = typeof step.allowed_values_json === 'string'
+              ? JSON.parse(step.allowed_values_json)
+              : step.allowed_values_json;
+          } catch (e) {}
+          if (!Array.isArray(allowedValues)) allowedValues = [];
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7, 
-              borderWidth: 0, borderColor: textColor, 
+              x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7,
+              borderWidth: 0, borderColor: textColor,
             });
           });
 
@@ -190,18 +199,18 @@ export default async function handler(req, res) {
           }
 
           if (defaultSelectedCode) {
-            try { radioGroup.select(defaultSelectedCode); } catch(e){}
+            try { radioGroup.select(defaultSelectedCode); } catch (e) {}
           }
         }
       });
     }
 
-    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR (BULLETPROOF) ---
+    // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR ---
     const codeBox = domExtraction.codeBoxCoords;
     if (codeBox && Array.isArray(configurator_options)) {
       const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
       const orderingCodeField = form.createTextField('SpecOrderingCode');
-      
+
       orderingCodeField.addToPage(targetPage, {
         x: codeBox.x,
         y: codeBox.y + 1,
@@ -212,7 +221,7 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
-      // NOTE: Intentionally leaving off .enableReadOnly() for visual repainting in Chrome
+      // NOTE: Intentionally not read-only, so browsers repaint the value.
 
       // 1. Sort steps by index
       const acroSteps = configurator_options.map(s => ({
@@ -225,13 +234,14 @@ export default async function handler(req, res) {
       let initialSegments = [];
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
-        let field = form.getField(acroSteps[i].stepName);
+        let field;
+        try { field = form.getField(acroSteps[i].stepName); } catch (e) { field = null; }
         if (field) {
           let val = (typeof field.getSelected === 'function') ? field.getSelected() : field.getText();
           if (val && val !== "Off" && val !== "") {
             let isDir = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Direction");
             let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
-            
+
             if (isDir) {
               initialDir = val;
             } else if (isLen) {
@@ -245,12 +255,12 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 3. Flatten metadata for Chrome's weak AcroJS engine (Mirroring Astralux structure)
+      // 3. Flatten metadata for the browsers' limited AcroJS engines
       const stepNames = acroSteps.map(s => s.stepName);
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
       const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      // 4. The Unified JavaScript Engine
+      // 4. The calculate script (plain ES5, wrapped in try/catch)
       const acroCalcScript = `
 try {
   var fields = ${JSON.stringify(stepNames)};
@@ -271,43 +281,27 @@ try {
 } catch (e) {}
 `;
 
-      // 5. Bind the script to the Calculate (C) event of the Text Box
+      // 5. Bind the script to the Calculate (C) event of the text field
       const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
-  S: 'JavaScript',
-  JS: PDFHexString.fromText(acroCalcScript),
-}));
+        S: 'JavaScript',
+        JS: PDFHexString.fromText(acroCalcScript),
+      }));
 
-const aaDict = pdfDoc.context.obj({ C: calcAction });
-orderingCodeField.acroField.dict.set(PDFName.of('AA'), aaDict);
-orderingCodeField.acroField.getWidgets().forEach(w =>
-  w.dict.set(PDFName.of('AA'), aaDict));
+      const aaDict = pdfDoc.context.obj({ C: calcAction });
+      orderingCodeField.acroField.dict.set(PDFName.of('AA'), aaDict);
+      orderingCodeField.acroField.getWidgets().forEach(w =>
+        w.dict.set(PDFName.of('AA'), aaDict));
 
-form.acroForm.dict.set(
-  PDFName.of('CO'),
-  pdfDoc.context.obj([orderingCodeField.acroField.ref])
-);
-form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
+      // 6. Register the field in the document calculation order (CO)
+      form.acroForm.dict.set(
+        PDFName.of('CO'),
+        pdfDoc.context.obj([orderingCodeField.acroField.ref])
+      );
 
-      const allFields = form.getFields();
-      allFields.forEach(field => {
-        if (field.getName() === 'SpecOrderingCode') return; // Skip the target itself
-        
-        const widgets = field.acroField.getWidgets();
-        widgets.forEach(widget => {
-          let aa = widget.dict.get(PDFName.of('AA'));
-          if (!aa) {
-            aa = pdfDoc.context.obj({});
-            widget.dict.set(PDFName.of('AA'), aa);
-          }
-          
-          // Radios/Checkboxes trigger on MouseUp (U), Text Inputs trigger on Blur (Bl)
-          if (field.constructor.name === 'PDFRadioGroup' || field.constructor.name === 'PDFCheckBox') {
-            aa.set(PDFName.of('U'), forceCalcAction); 
-          } else {
-            aa.set(PDFName.of('Bl'), forceCalcAction);
-          }
-        });
-      });
+      // 7. Ask viewers to redraw field appearances when values change
+      form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
+
+      // (Old step 7 removed: no calculateNow() or per-field Mouse Up / Blur actions.)
     }
 
     form.updateFieldAppearances(customFont);
