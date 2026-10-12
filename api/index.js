@@ -110,18 +110,13 @@ export default async function handler(req, res) {
 
     let customFont;
     try {
-      // Fetch directly from your own reliable server
-      const fontRes = await fetch('https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSerif/NotoSerif-SemiBold.ttf');
-      
-      if (!fontRes.ok) {
-        throw new Error(`Font fetch failed with status: ${fontRes.status}`);
-      }
-      
-      const fontArrayBuffer = await fontRes.arrayBuffer();
-      customFont = await pdfDoc.embedFont(fontArrayBuffer);
-      
+      // Fetch Lora (which your Webflow site uses) directly from Google's raw static repo
+      const fontRes = await fetch('https://raw.githubusercontent.com/googlefonts/lora/main/fonts/ttf/Lora-Bold.ttf');
+      if (!fontRes.ok) throw new Error("Font fetch failed");
+      customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
     } catch (err) {
-      console.error('CRITICAL: Failed to load custom font. Falling back to Times.', err);
+      console.log('Falling back to built-in Times Roman:', err);
+      // TimesRomanBold is the closest built-in standard PDF font to Palatino/Lora
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
     }
 
@@ -208,7 +203,7 @@ export default async function handler(req, res) {
         x: codeBox.x,
         y: codeBox.y,
         width: codeBox.width,
-        height: codeBox.height - 1.5,
+        height: codeBox.height - 2,
         font: customFont,
         textColor: textColor,
         borderWidth: 0,
