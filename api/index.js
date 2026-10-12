@@ -127,7 +127,7 @@ export default async function handler(req, res) {
     // --- A. HEADER TEXT INPUTS ---
     const headerConfigs = [
       { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
-      { name: 'fixture_type', x: 265, y: 705, width: 130, height: 16 },
+      { name: 'fixture_type', x: 267, y: 705, width: 130, height: 16 },
       { name: 'project_location', x: 442, y: 705, width: 140, height: 16 }
     ];
 
@@ -201,9 +201,9 @@ export default async function handler(req, res) {
       
       orderingCodeField.addToPage(targetPage, {
         x: codeBox.x,
-        y: codeBox.y,
+        y: codeBox.y - 1,
         width: codeBox.width,
-        height: codeBox.height - 2,
+        height: codeBox.height - 2.5,
         font: customFont,
         textColor: textColor,
         borderWidth: 0,
