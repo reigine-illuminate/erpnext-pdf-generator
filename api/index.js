@@ -110,7 +110,7 @@ export default async function handler(req, res) {
 
     let customFont;
     try {
-      const fontRes = await fetch('https://cdn.jsdelivr.net/npm/@fontsource/noto-serif/files/noto-serif-latin-600-normal.ttf');
+      const fontRes = await fetch('https://app.illumenate.lighting/files/NotoSerif-SemiBold.ttf');
       if (!fontRes.ok) throw new Error("Font fetch failed");
       customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
     } catch (err) {
@@ -174,7 +174,7 @@ export default async function handler(req, res) {
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: coord.width || 9, height: coord.height || 9, 
+              x: coord.x, y: coord.y, width: coord.width || 8, height: coord.height || 8, 
               borderWidth: 0, borderColor: textColor, // Keeps borders invisible
             });
           });
@@ -201,7 +201,7 @@ export default async function handler(req, res) {
         x: codeBox.x,
         y: codeBox.y - 2, // Slight nudge for text baseline
         width: codeBox.width,
-        height: codeBox.height + 4,
+        height: codeBox.height,
         font: customFont,
         textColor: textColor,
         borderWidth: 0,
