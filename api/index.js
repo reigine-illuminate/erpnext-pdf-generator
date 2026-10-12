@@ -210,14 +210,38 @@ export default async function handler(req, res) {
       });
       orderingCodeField.setFontSize(10);
 
-      // Serialize product options so Acrobat JS knows exactly how to assemble the code
+      // 1. Sort the options precisely by their display step
       const acroSteps = configurator_options.map(s => ({
         stepName: 'step_' + s.option_step,
         type: s.option_type,
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      // Create the Acrobat JS Engine script
+      // 2. Pre-calculate the initial default value so the PDF opens fully populated
+      let initialSegments = [];
+      let initialDir = "";
+      for (let i = 0; i < acroSteps.length; i++) {
+        let field = form.getField(acroSteps[i].stepName);
+        if (field) {
+          let val = (typeof field.getSelected === 'function') ? field.getSelected() : field.getText();
+          if (val && val !== "Off" && val !== "") {
+            let isDir = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Direction");
+            let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
+            
+            if (isDir) {
+              initialDir = val;
+            } else if (isLen) {
+              initialSegments.push(initialDir + val);
+              initialDir = "";
+            } else {
+              initialSegments.push(val);
+            }
+          }
+        }
+      }
+      orderingCodeField.setText(initialSegments.join('-'));
+
+      // 3. Acrobat JavaScript Engine (Runs every time a radio button is clicked)
       const acroCalcScript = `
         var steps = ${JSON.stringify(acroSteps)};
         var segments = [];
@@ -227,15 +251,14 @@ export default async function handler(req, res) {
           var f = this.getField(steps[i].stepName);
           if (f) {
             var val = f.valueAsString;
-            // Native PDF radio buttons return 'Off' when unchecked
-            if (val && val !== "Off") {
+            if (val && val !== "Off" && val !== "") {
               var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
               var isLen = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Length") !== -1;
               
               if (isDir) {
-                dirVal = val; // Store 'E' or 'C'
+                dirVal = val;
               } else if (isLen) {
-                segments.push(dirVal + val); // Combine into 'E15'
+                segments.push(dirVal + val);
                 dirVal = "";
               } else {
                 segments.push(val);
@@ -246,13 +269,20 @@ export default async function handler(req, res) {
         event.value = segments.join('-');
       `;
 
-      // Inject the calculation script directly into the text field dictionary
+      // 🐛 FIX: Add `Type: 'Action'` so Acrobat strictly respects the Calculate event
       orderingCodeField.acroField.dict.set(
         PDFName.of('AA'),
         pdfDoc.context.obj({
-          C: { S: 'JavaScript', JS: acroCalcScript }
+          C: {
+            Type: 'Action',
+            S: 'JavaScript',
+            JS: acroCalcScript
+          }
         })
       );
+      
+      // Make the ordering code box read-only so users don't type over the calculation
+      orderingCodeField.enableReadOnly();
     }
 
     form.updateFieldAppearances(customFont);
