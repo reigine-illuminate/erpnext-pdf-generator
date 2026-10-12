@@ -212,7 +212,6 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
-      orderingCodeField.enableReadOnly();
 
       const acroSteps = configurator_options.map(s => ({
         stepName: 'step_' + s.option_step,
