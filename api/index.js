@@ -247,7 +247,7 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 2. The JavaScript Engine (Now intercepts the new value instantly)
+      // 2. The JavaScript Engine (Now tied to Calculate (C) event of the text box itself)
       const acroCalcScript = `
         var steps = ${JSON.stringify(acroSteps)};
         var segments = [];
@@ -256,9 +256,8 @@ export default async function handler(req, res) {
         for (var i = 0; i < steps.length; i++) {
           var f = this.getField(steps[i].stepName);
           if (f) {
-            // 🐛 FIX: If this is the field that was just clicked, grab the new incoming event.value. 
-            // Otherwise, grab the existing f.value.
-            var val = (event.target !== null && f.name === event.target.name) ? event.value : f.value;
+            // Because this is a Calculate event, f.value is natively updated by Acrobat/Chrome
+            var val = f.value;
             
             if (val && val !== "Off" && val !== "") {
               var isDir = steps[i].type === "Feed Direction" && steps[i].label.indexOf("Direction") !== -1;
@@ -275,24 +274,40 @@ export default async function handler(req, res) {
             }
           }
         }
-        var targetField = this.getField("SpecOrderingCode");
-        if (targetField) targetField.value = segments.join('-');
+        event.value = segments.join('-');
       `;
 
-      // 3. Bind the script directly to every individual Radio Group's "Validate" event
-      acroSteps.forEach(step => {
-        let field = form.getField(step.stepName);
-        if (field) {
-          field.acroField.dict.set(
-            PDFName.of('AA'),
-            pdfDoc.context.obj({
-              V: {
-                Type: 'Action',
-                S: 'JavaScript',
-                JS: acroCalcScript
-              }
-            })
-          );
+      // 3. Attach the script to the Calculate (C) event of the SpecOrderingCode field
+      const calcAction = pdfDoc.context.obj({
+        Type: 'Action',
+        S: 'JavaScript',
+        JS: acroCalcScript
+      });
+
+      orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
+        C: calcAction 
+      }));
+
+      // 4. Force Google Chrome to recalculate upon MouseUp (U) on any radio/checkbox
+      const forceCalcAction = pdfDoc.context.obj({
+        Type: 'Action',
+        S: 'JavaScript',
+        JS: 'this.calculateNow();'
+      });
+
+      const fields = form.getFields();
+      fields.forEach(field => {
+        if (field.constructor.name === 'PDFRadioGroup' || field.constructor.name === 'PDFCheckBox') {
+          const widgets = field.acroField.getWidgets();
+          
+          widgets.forEach(widget => {
+            let aa = widget.dict.get(PDFName.of('AA'));
+            if (!aa) {
+              aa = pdfDoc.context.obj({});
+              widget.dict.set(PDFName.of('AA'), aa);
+            }
+            aa.set(PDFName.of('U'), forceCalcAction); 
+          });
         }
       });
     }
