@@ -183,8 +183,8 @@ export default async function handler(req, res) {
             });
           });
 
-          // ONLY pre-select defaults if the category is NOT Feed Direction or Length
-          if (step.option_type !== "Feed Direction" && step.option_type !== "Length") {
+          // ONLY pre-select defaults if the category is explicitly marked as REQUIRED
+          if (step.is_required == 1 || step.is_required === true) {
             allowedValues.forEach((valObj, idx) => {
               if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
                 defaultSelectedCode = String(valObj.code || valObj.value);
