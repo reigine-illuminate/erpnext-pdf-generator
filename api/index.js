@@ -87,7 +87,9 @@ export default async function handler(req, res) {
           };
           
           // Hide text so pdf-lib field can overlay cleanly
-          codeBox.style.color = 'transparent'; 
+          codeBox.style.color = 'transparent';
+          codeBox.style.background = 'transparent';
+          codeBox.style.backgroundColor = 'transparent';
         }
       }
 
@@ -181,11 +183,15 @@ export default async function handler(req, res) {
             });
           });
 
-          allowedValues.forEach((valObj, idx) => {
-            if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
-              defaultSelectedCode = String(valObj.code || valObj.value);
-            }
-          });
+          // ONLY pre-select defaults if the category is NOT Feed Direction or Length
+          if (step.option_type !== "Feed Direction" && step.option_type !== "Length") {
+            allowedValues.forEach((valObj, idx) => {
+              if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
+                defaultSelectedCode = String(valObj.code || valObj.value);
+              }
+            });
+          }
+
           if (defaultSelectedCode) {
             try { radioGroup.select(defaultSelectedCode); } catch(e){}
           }
