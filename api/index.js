@@ -111,7 +111,7 @@ export default async function handler(req, res) {
     let customFont;
     try {
       // Fetch directly from your own reliable server
-      const fontRes = await fetch('https://app.illumenate.lighting/files/NotoSerif-SemiBold.ttf');
+      const fontRes = await fetch('https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSerif/NotoSerif-SemiBold.ttf');
       
       if (!fontRes.ok) {
         throw new Error(`Font fetch failed with status: ${fontRes.status}`);
@@ -181,7 +181,7 @@ export default async function handler(req, res) {
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: coord.width || 8, height: coord.height || 8, 
+              x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7, 
               borderWidth: 0, borderColor: textColor, // Keeps borders invisible
             });
           });
@@ -206,9 +206,9 @@ export default async function handler(req, res) {
       
       orderingCodeField.addToPage(targetPage, {
         x: codeBox.x,
-        y: codeBox.y - 2, // Slight nudge for text baseline
+        y: codeBox.y,
         width: codeBox.width,
-        height: codeBox.height,
+        height: codeBox.height - 1.5,
         font: customFont,
         textColor: textColor,
         borderWidth: 0,
