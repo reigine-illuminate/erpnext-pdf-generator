@@ -110,11 +110,18 @@ export default async function handler(req, res) {
 
     let customFont;
     try {
+      // Fetch directly from your own reliable server
       const fontRes = await fetch('https://app.illumenate.lighting/files/NotoSerif-SemiBold.ttf');
-      if (!fontRes.ok) throw new Error("Font fetch failed");
-      customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
+      
+      if (!fontRes.ok) {
+        throw new Error(`Font fetch failed with status: ${fontRes.status}`);
+      }
+      
+      const fontArrayBuffer = await fontRes.arrayBuffer();
+      customFont = await pdfDoc.embedFont(fontArrayBuffer);
+      
     } catch (err) {
-      console.error('Failed to load Noto Serif. Falling back to Times:', err);
+      console.error('CRITICAL: Failed to load custom font. Falling back to Times.', err);
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
     }
 
