@@ -112,13 +112,11 @@ export default async function handler(req, res) {
 
     let customFont;
     try {
-      // Fetch Lora (which your Webflow site uses) directly from Google's raw static repo
       const fontRes = await fetch('https://raw.githubusercontent.com/googlefonts/lora/main/fonts/ttf/Lora-Bold.ttf');
       if (!fontRes.ok) throw new Error("Font fetch failed");
       customFont = await pdfDoc.embedFont(await fontRes.arrayBuffer());
     } catch (err) {
       console.log('Falling back to built-in Times Roman:', err);
-      // TimesRomanBold is the closest built-in standard PDF font to Palatino/Lora
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
     }
 
@@ -179,11 +177,10 @@ export default async function handler(req, res) {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7, 
-              borderWidth: 0, borderColor: textColor, // Keeps borders invisible
+              borderWidth: 0, borderColor: textColor, 
             });
           });
 
-          // ONLY pre-select defaults if the category is explicitly marked as REQUIRED
           if (step.is_required == 1 || step.is_required === true) {
             allowedValues.forEach((valObj, idx) => {
               if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
@@ -223,7 +220,6 @@ export default async function handler(req, res) {
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      // 1. Pre-calculate the initial default value
       let initialSegments = [];
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
@@ -247,7 +243,7 @@ export default async function handler(req, res) {
       }
       orderingCodeField.setText(initialSegments.join('-'));
 
-      // 2. The JavaScript Engine (Now tied to Calculate (C) event of the text box itself)
+      // THE FIX: Universal Javascript bound explicitly to interaction events
       const acroCalcScript = `
         var steps = ${JSON.stringify(acroSteps)};
         var segments = [];
@@ -256,7 +252,6 @@ export default async function handler(req, res) {
         for (var i = 0; i < steps.length; i++) {
           var f = this.getField(steps[i].stepName);
           if (f) {
-            // Because this is a Calculate event, f.value is natively updated by Acrobat/Chrome
             var val = f.value;
             
             if (val && val !== "Off" && val !== "") {
@@ -274,39 +269,35 @@ export default async function handler(req, res) {
             }
           }
         }
-        event.value = segments.join('-');
+        var targetField = this.getField("SpecOrderingCode");
+        if (targetField) {
+            targetField.value = segments.join('-');
+        }
       `;
 
-      // 3. Attach the script to the Calculate (C) event of the SpecOrderingCode field
       const calcAction = pdfDoc.context.obj({
         Type: 'Action',
         S: 'JavaScript',
         JS: acroCalcScript
       });
 
+      // Bind to Calculate event (Native standard for Acrobat)
       orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
         C: calcAction 
       }));
 
-      // 4. Force Google Chrome to recalculate upon MouseUp (U) on any radio/checkbox
-      const forceCalcAction = pdfDoc.context.obj({
-        Type: 'Action',
-        S: 'JavaScript',
-        JS: 'this.calculateNow();'
-      });
-
+      // Bind to MouseUp and Blur events of EVERY radio/checkbox (Forces execution in Chrome/PDFium)
       const fields = form.getFields();
       fields.forEach(field => {
         if (field.constructor.name === 'PDFRadioGroup' || field.constructor.name === 'PDFCheckBox') {
           const widgets = field.acroField.getWidgets();
-          
           widgets.forEach(widget => {
-            let aa = widget.dict.get(PDFName.of('AA'));
-            if (!aa) {
-              aa = pdfDoc.context.obj({});
-              widget.dict.set(PDFName.of('AA'), aa);
-            }
-            aa.set(PDFName.of('U'), forceCalcAction); 
+            // Overwrites the AA dictionary on the widget layer, explicitly mapping the calculation
+            // to run exactly when the user finishes clicking (U = MouseUp, Bl = Blur)
+            widget.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
+              U: calcAction,
+              Bl: calcAction
+            }));
           });
         }
       });
