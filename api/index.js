@@ -116,7 +116,7 @@ export default async function handler(req, res) {
     // subset:false embeds every glyph so text produced later by the calculate script always renders.
     let customFont;
     try {
-      const fontPath = path.join(process.cwd(), 'fonts', 'Lora-Bold.ttf');
+      const fontPath = path.join(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
       const fontBytes = fs.readFileSync(fontPath);
       customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
