@@ -156,6 +156,11 @@ export default async function handler(req, res) {
     const pages = pdfDoc.getPages();
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
+    const triggerCalcRef = pdfDoc.context.register(pdfDoc.context.obj({
+      S: 'JavaScript',
+      JS: PDFHexString.fromText('try { this.calculateNow(); } catch(e) {}')
+    }));
+
     // --- A. HEADER TEXT INPUTS ---
     const headerConfigs = [
       { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
@@ -177,10 +182,8 @@ export default async function handler(req, res) {
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
     
-    // Inject Series dynamically as Step 0 so it aligns with AcroForm logic natively
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
-      // Avoid injecting duplicate Series objects if they accidentally run through it twice
       const hasSeries = configurator_options.some(c => c.option_step === 0 && c.option_type === "Series");
       if (!hasSeries) {
         configurator_options.unshift({
@@ -263,26 +266,54 @@ export default async function handler(req, res) {
       });
       orderingCodeField.setFontSize(10);
 
-      // 1. Sort steps by index
       const acroSteps = configurator_options.map(s => ({
         stepName: 'step_' + s.option_step,
         type: s.option_type,
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      // 2. Flatten metadata for the browsers' limited AcroJS engines
+      let initialSegments = [];
+      let initialDir = "";
+      
+      for (let i = 0; i < acroSteps.length; i++) {
+        let field;
+        try { field = form.getField(acroSteps[i].stepName); } catch (e) { field = null; }
+        if (field) {
+          let val = (typeof field.getSelected === 'function') ? field.getSelected() : field.getText();
+          if (val && val !== "Off" && val !== "") {
+            let isDir = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Direction");
+            let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
+
+            if (isDir) {
+              if (initialDir) initialSegments.push(initialDir);
+              initialDir = val;
+            } else if (isLen) {
+              initialSegments.push(initialDir + val);
+              initialDir = "";
+            } else {
+              if (initialDir) { initialSegments.push(initialDir); initialDir = ""; }
+              initialSegments.push(val);
+            }
+          }
+        }
+      }
+      if (initialDir) initialSegments.push(initialDir);
+      orderingCodeField.setText(initialSegments.join('-'));
+
       const stepNames = acroSteps.map(s => s.stepName);
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
       const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      // 3. The exact native AcroJS calculate script mimicking your InDesign setup
-      const acroCalcScript = `var fields = ${JSON.stringify(stepNames)};
+      // HACK: Explicitly declare every field so Acrobat's parser registers the calculation dependencies
+      const dependencyDeclarations = stepNames.map(name => `this.getField("${name}");`).join('\n');
+
+      // Formatted precisely without leading spaces or newlines
+      const acroCalcScript = `${dependencyDeclarations}
+var fields = ${JSON.stringify(stepNames)};
 var isDir = ${JSON.stringify(isDirFlags)};
 var isLen = ${JSON.stringify(isLenFlags)};
-
 var parts = [];
 var dirVal = "";
-
 for (var i = 0; i < fields.length; i++) {
   var f = this.getField(fields[i]);
   if (f && f.value !== "Off" && f.value !== "") {
@@ -301,10 +332,8 @@ for (var i = 0; i < fields.length; i++) {
   }
 }
 if (dirVal) parts.push(dirVal);
-event.value = parts.join("-");
-`;
+event.value = parts.join("-");`;
 
-      // 4. Bind the script to the Calculate (C) event of the text field
       const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
         S: 'JavaScript',
         JS: PDFHexString.fromText(acroCalcScript),
@@ -315,13 +344,11 @@ event.value = parts.join("-");
       orderingCodeField.acroField.getWidgets().forEach(w =>
         w.dict.set(PDFName.of('AA'), aaDict));
 
-      // 5. Register the field in the document calculation order (CO)
       form.acroForm.dict.set(
         PDFName.of('CO'),
         pdfDoc.context.obj([orderingCodeField.acroField.ref])
       );
 
-      // 6. Ask viewers to redraw field appearances when values change natively
       form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
     }
 
