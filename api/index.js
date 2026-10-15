@@ -156,7 +156,7 @@ export default async function handler(req, res) {
     const pages = pdfDoc.getPages();
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // Creates the explicit trigger to force Acrobat to update immediately on click
+    // Creates the explicit trigger to force Acrobat to update immediately on click/blur
     const triggerCalcRef = pdfDoc.context.register(pdfDoc.context.obj({
       S: 'JavaScript',
       JS: PDFHexString.fromText('try { this.calculateNow(); } catch(e) {}')
@@ -183,6 +183,7 @@ export default async function handler(req, res) {
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
     
+    // Inject Series dynamically as Step 0 so it aligns with AcroForm logic natively
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
       configurator_options.unshift({
@@ -214,11 +215,10 @@ export default async function handler(req, res) {
           });
           lengthField.setFontSize(9);
           
-          // Force Acrobat to calculate when you type in the text box
+          // Force Acrobat to calculate on Blur (when you click out of the text field)
           lengthField.acroField.getWidgets().forEach(w => {
             w.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-              Bl: triggerCalcRef,
-              K: triggerCalcRef
+              Bl: triggerCalcRef
             }));
           });
 
@@ -252,11 +252,9 @@ export default async function handler(req, res) {
             try { radioGroup.select(defaultSelectedCode); } catch (e) {}
           }
 
-          // Force Acrobat to calculate instantly upon clicking a radio button
+          // Force Acrobat to calculate instantly upon clicking a radio button by assigning to the primary Action (A) dict
           radioGroup.acroField.getWidgets().forEach(w => {
-            w.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
-              U: triggerCalcRef
-            }));
+            w.dict.set(PDFName.of('A'), triggerCalcRef);
           });
         }
       });
@@ -288,9 +286,8 @@ export default async function handler(req, res) {
 
       // 2. Pre-calculate the initial default value on generation
       let initialSegments = [];
-      if (safeSlug) initialSegments.push(safeSlug);
-      
       let initialDir = "";
+      
       for (let i = 0; i < acroSteps.length; i++) {
         let field;
         try { field = form.getField(acroSteps[i].stepName); } catch (e) { field = null; }
@@ -329,9 +326,6 @@ try {
   var isLen = ${JSON.stringify(isLenFlags)};
   
   var segments = [];
-  var slug = "${safeSlug}";
-  if (slug) segments.push(slug);
-  
   var dirVal = "";
   for (var i = 0; i < fields.length; i++) {
     var f = this.getField(fields[i]);
