@@ -11,12 +11,10 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
   try {
-    // Extract the new product_slug from the request body
     const { html, configurator_options, product_slug } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
     const cleanHtml = html.replace(/\\n/g, '');
-
     chromium.setGraphicsMode = false;
 
     // 1. LAUNCH SERVERLESS BROWSER
@@ -62,7 +60,6 @@ export default async function handler(req, res) {
       `
     });
 
-    // Bump deviceScaleFactor to 2 to eliminate thick, low-res chunky borders
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
@@ -152,7 +149,8 @@ export default async function handler(req, res) {
       customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
       console.log('Falling back to built-in Times Roman:', err);
-      customFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      // Fallback adjusted to standard TimesRoman per request
+      customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     }
 
     const form = pdfDoc.getForm();
@@ -179,6 +177,17 @@ export default async function handler(req, res) {
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
+    
+    // Inject Series dynamically as Step 0 so it aligns with AcroForm logic
+    const safeSlug = (product_slug || "").toUpperCase();
+    if (Array.isArray(configurator_options) && safeSlug) {
+      configurator_options.unshift({
+        option_step: 0,
+        option_type: "Series",
+        is_required: 1,
+        allowed_values: [{ code: safeSlug }]
+      });
+    }
 
     if (Array.isArray(configurator_options)) {
       configurator_options.forEach((step) => {
@@ -205,29 +214,22 @@ export default async function handler(req, res) {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
-          let allowedValues = [];
-          try {
-            allowedValues = typeof step.allowed_values_json === 'string'
-              ? JSON.parse(step.allowed_values_json)
-              : step.allowed_values_json;
-          } catch (e) {}
-          if (!Array.isArray(allowedValues)) allowedValues = [];
+          // Check direct mapping due to new API structure
+          let allowedValues = Array.isArray(step.allowed_values) ? step.allowed_values : [];
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7,
-              borderWidth: 0, borderColor: textColor,
+              borderWidth: 0.5, borderColor: textColor,
             });
           });
 
           // Check for pre-selection based on requirements
           if (step.is_required == 1 || step.is_required === true) {
-            // If there's only one option, automatically pre-select it
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
             } else {
-              // Otherwise, look for an explicitly declared default
               allowedValues.forEach((valObj) => {
                 if (valObj.is_default === 1 && !defaultSelectedCode) {
                   defaultSelectedCode = String(valObj.code || valObj.value);
@@ -267,12 +269,8 @@ export default async function handler(req, res) {
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
-      const safeSlug = (product_slug || "").toUpperCase();
-
       // 2. Pre-calculate the initial default value on generation
       let initialSegments = [];
-      if (safeSlug) initialSegments.push(safeSlug);
-      
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
         let field;
@@ -309,9 +307,6 @@ try {
   var isLen = ${JSON.stringify(isLenFlags)};
   
   var segments = [];
-  var slug = "${safeSlug}";
-  if (slug) segments.push(slug);
-  
   var dirVal = "";
   for (var i = 0; i < fields.length; i++) {
     var f = this.getField(fields[i]);
