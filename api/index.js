@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
-import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString, PDFString } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFString, PDFDict, PDFArray } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export default async function handler(req, res) {
@@ -152,10 +152,8 @@ export default async function handler(req, res) {
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     }
 
-    // Acrobat re-renders calculated/typed text itself and can't do that reliably with an
-    // Identity-H (Type0) subset font, and it looks fonts up in AcroForm /DR. So: use a simple
-    // base-14 font for the fields whose value changes, and register all fonts in /DR.
-    const liveFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    // Register the form font in AcroForm /DR (Acrobat looks fonts up there).
+    const liveFont = customFont; // keep the same font (a base-14 swap turned '-' into '>' in Chrome)
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
@@ -339,20 +337,33 @@ for (var i = 0; i < fields.length; i++) {
 if (dirVal) parts.push(dirVal);
 event.value = parts.join("-");`;
 
+      // Store the script as a stream (same as the InDesign file that works in Acrobat)
+      const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(acroCalcScript));
       const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
         S: 'JavaScript',
-        JS: PDFHexString.fromText(acroCalcScript),
+        JS: jsStreamRef,
       }));
 
-      const aaDict = pdfDoc.context.obj({ C: calcAction });
-      orderingCodeField.acroField.dict.set(PDFName.of('AA'), aaDict);
+      orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
 
-      form.acroForm.dict.set(
-        PDFName.of('CO'),
-        pdfDoc.context.obj([orderingCodeField.acroField.ref])
-      );
+      // Merge field + widget into ONE object (like InDesign does) so the calculated field
+      // has no /Kids. Then point /Fields and /CO at that merged object.
+      const fieldRef = orderingCodeField.acroField.ref;
+      const fieldDict = orderingCodeField.acroField.dict;
+      const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
+      const widgetDict = pdfDoc.context.lookup(widgetRef, PDFDict);
+      ['T', 'FT', 'Ff', 'V', 'DA', 'AA'].forEach((k) => {
+        const val = fieldDict.get(PDFName.of(k));
+        if (val) widgetDict.set(PDFName.of(k), val);
+      });
+      widgetDict.delete(PDFName.of('Parent'));
 
-      form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
+      const fieldsArr = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray);
+      for (let i = 0; i < fieldsArr.size(); i++) {
+        if (String(fieldsArr.get(i)) === String(fieldRef)) fieldsArr.set(i, widgetRef);
+      }
+      form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
+      form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
     }
 
     const pdfBytes = await pdfDoc.save();
