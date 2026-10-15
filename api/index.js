@@ -144,18 +144,23 @@ export default async function handler(req, res) {
 
     let customFont;
     try {
-      const fontPath = path.join(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
+      const fontPath = path.resolve(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
       const fontBytes = fs.readFileSync(fontPath);
       customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
-      console.log('Falling back to built-in Times Roman:', err);
-      // Fallback adjusted to standard TimesRoman per request
+      console.log('Falling back to built-in Times Roman:', err.message);
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     }
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
+
+    // Creates the explicit trigger to force Acrobat to update immediately on click
+    const triggerCalcRef = pdfDoc.context.register(pdfDoc.context.obj({
+      S: 'JavaScript',
+      JS: PDFHexString.fromText('try { this.calculateNow(); } catch(e) {}')
+    }));
 
     // --- A. HEADER TEXT INPUTS ---
     const headerConfigs = [
@@ -178,7 +183,6 @@ export default async function handler(req, res) {
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
     
-    // Inject Series dynamically as Step 0 so it aligns with AcroForm logic
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
       configurator_options.unshift({
@@ -209,12 +213,19 @@ export default async function handler(req, res) {
             borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
           });
           lengthField.setFontSize(9);
+          
+          // Force Acrobat to calculate when you type in the text box
+          lengthField.acroField.getWidgets().forEach(w => {
+            w.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
+              Bl: triggerCalcRef,
+              K: triggerCalcRef
+            }));
+          });
 
         } else {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
-          // Check direct mapping due to new API structure
           let allowedValues = Array.isArray(step.allowed_values) ? step.allowed_values : [];
 
           stepCoords.forEach((coord) => {
@@ -225,7 +236,6 @@ export default async function handler(req, res) {
             });
           });
 
-          // Check for pre-selection based on requirements
           if (step.is_required == 1 || step.is_required === true) {
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
@@ -241,6 +251,13 @@ export default async function handler(req, res) {
           if (defaultSelectedCode) {
             try { radioGroup.select(defaultSelectedCode); } catch (e) {}
           }
+
+          // Force Acrobat to calculate instantly upon clicking a radio button
+          radioGroup.acroField.getWidgets().forEach(w => {
+            w.dict.set(PDFName.of('AA'), pdfDoc.context.obj({
+              U: triggerCalcRef
+            }));
+          });
         }
       });
     }
@@ -271,6 +288,8 @@ export default async function handler(req, res) {
 
       // 2. Pre-calculate the initial default value on generation
       let initialSegments = [];
+      if (safeSlug) initialSegments.push(safeSlug);
+      
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
         let field;
@@ -282,16 +301,19 @@ export default async function handler(req, res) {
             let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
 
             if (isDir) {
+              if (initialDir) initialSegments.push(initialDir);
               initialDir = val;
             } else if (isLen) {
               initialSegments.push(initialDir + val);
               initialDir = "";
             } else {
+              if (initialDir) { initialSegments.push(initialDir); initialDir = ""; }
               initialSegments.push(val);
             }
           }
         }
       }
+      if (initialDir) initialSegments.push(initialDir);
       orderingCodeField.setText(initialSegments.join('-'));
 
       // 3. Flatten metadata for the browsers' limited AcroJS engines
@@ -307,16 +329,29 @@ try {
   var isLen = ${JSON.stringify(isLenFlags)};
   
   var segments = [];
+  var slug = "${safeSlug}";
+  if (slug) segments.push(slug);
+  
   var dirVal = "";
   for (var i = 0; i < fields.length; i++) {
     var f = this.getField(fields[i]);
     var v = f ? f.value : "";
     if (v && v !== "Off") {
-      if (isDir[i]) { dirVal = v; }
-      else if (isLen[i]) { segments.push(dirVal + v); dirVal = ""; }
-      else { segments.push(v); }
+      if (isDir[i]) { 
+        if (dirVal) segments.push(dirVal); 
+        dirVal = v; 
+      }
+      else if (isLen[i]) { 
+        segments.push(dirVal + v); 
+        dirVal = ""; 
+      }
+      else { 
+        if (dirVal) { segments.push(dirVal); dirVal = ""; }
+        segments.push(v); 
+      }
     }
   }
+  if (dirVal) segments.push(dirVal);
   event.value = segments.join("-");
 } catch (e) {}
 `;
