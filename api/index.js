@@ -1,3 +1,5 @@
+// This file contains a serverless function that generates a PDF from HTML using Puppeteer and pdf-lib.
+
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
@@ -9,15 +11,15 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
   try {
-    const { html, configurator_options } = req.body;
+    // Extract the new product_slug from the request body
+    const { html, configurator_options, product_slug } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    // 1. FIX: Strip literal "\n" text artifacts injected by the n8n script mapping
     const cleanHtml = html.replace(/\\n/g, '');
 
     chromium.setGraphicsMode = false;
 
-    // 2. LAUNCH SERVERLESS BROWSER
+    // 1. LAUNCH SERVERLESS BROWSER
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -29,7 +31,6 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
-    // 3. FIX: Force strict 8.5x11 print layout, strip Webflow margins, and block ghost pages
     await page.addStyleTag({
       content: `
         @media print {
@@ -38,6 +39,8 @@ export default async function handler(req, res) {
             margin: 0 !important; 
             padding: 0 !important; 
             background: white !important; 
+            -webkit-print-color-adjust: exact !important; 
+            print-color-adjust: exact !important;
           }
           .page-wrapper {
             width: 8.5in !important;
@@ -51,7 +54,6 @@ export default async function handler(req, res) {
             overflow: hidden !important;
             position: relative !important;
           }
-          /* Kills the trailing blank page (Page 4) */
           .page-wrapper:last-of-type {
             page-break-after: avoid !important;
             break-after: avoid !important;
@@ -60,12 +62,12 @@ export default async function handler(req, res) {
       `
     });
 
-    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 1 });
+    // Bump deviceScaleFactor to 2 to eliminate thick, low-res chunky borders
+    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
-    // 4. EXTRACT DOM COORDINATES, INJECT PAGINATION & FIND CODE INPUT BOX
+    // 2. EXTRACT DOM COORDINATES
     const domExtraction = await page.evaluate(() => {
-      // --- A. INJECT DYNAMIC PAGINATION ---
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
       wrappers.forEach((wrapper, index) => {
         const pageNo = wrapper.querySelector('#spec-current-page-no');
@@ -74,7 +76,6 @@ export default async function handler(req, res) {
         if (totalNo) totalNo.innerText = String(wrappers.length);
       });
 
-      // --- B. EXTRACT CHECKBOX COORDINATES ---
       const items = document.querySelectorAll('[data-step]');
       const coords = [];
 
@@ -104,7 +105,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // --- C. EXTRACT MAIN ORDERING CODE INPUT BOX ---
       let codeBoxCoords = null;
       const codeBox = document.querySelector('#spec-ordering-code-input');
       if (codeBox) {
@@ -122,7 +122,6 @@ export default async function handler(req, res) {
             height: rect.height * 0.75
           };
 
-          // Hide text so pdf-lib field can overlay cleanly
           codeBox.style.color = 'transparent';
           codeBox.style.background = 'transparent';
           codeBox.style.backgroundColor = 'transparent';
@@ -132,7 +131,7 @@ export default async function handler(req, res) {
       return { coords, codeBoxCoords };
     });
 
-    // 5. SNAP BASE PDF
+    // 3. SNAP BASE PDF
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
@@ -142,7 +141,7 @@ export default async function handler(req, res) {
 
     await browser.close();
 
-    // 6. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
+    // 4. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
@@ -222,12 +221,19 @@ export default async function handler(req, res) {
             });
           });
 
+          // Check for pre-selection based on requirements
           if (step.is_required == 1 || step.is_required === true) {
-            allowedValues.forEach((valObj, idx) => {
-              if ((valObj.is_default === 1 || idx === 0) && !defaultSelectedCode) {
-                defaultSelectedCode = String(valObj.code || valObj.value);
-              }
-            });
+            // If there's only one option, automatically pre-select it
+            if (allowedValues.length === 1) {
+              defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
+            } else {
+              // Otherwise, look for an explicitly declared default
+              allowedValues.forEach((valObj) => {
+                if (valObj.is_default === 1 && !defaultSelectedCode) {
+                  defaultSelectedCode = String(valObj.code || valObj.value);
+                }
+              });
+            }
           }
 
           if (defaultSelectedCode) {
@@ -261,8 +267,12 @@ export default async function handler(req, res) {
         label: s.option_label || ''
       })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
 
+      const safeSlug = (product_slug || "").toUpperCase();
+
       // 2. Pre-calculate the initial default value on generation
       let initialSegments = [];
+      if (safeSlug) initialSegments.push(safeSlug);
+      
       let initialDir = "";
       for (let i = 0; i < acroSteps.length; i++) {
         let field;
@@ -297,7 +307,11 @@ try {
   var fields = ${JSON.stringify(stepNames)};
   var isDir = ${JSON.stringify(isDirFlags)};
   var isLen = ${JSON.stringify(isLenFlags)};
+  
   var segments = [];
+  var slug = "${safeSlug}";
+  if (slug) segments.push(slug);
+  
   var dirVal = "";
   for (var i = 0; i < fields.length; i++) {
     var f = this.getField(fields[i]);
