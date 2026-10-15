@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
-import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString, PDFDict, PDFRadioGroup } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString, PDFString } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export default async function handler(req, res) {
@@ -152,8 +152,17 @@ export default async function handler(req, res) {
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     }
 
+    // Acrobat re-renders calculated/typed text itself and can't do that reliably with an
+    // Identity-H (Type0) subset font, and it looks fonts up in AcroForm /DR. So: use a simple
+    // base-14 font for the fields whose value changes, and register all fonts in /DR.
+    const liveFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
+    form.acroForm.dict.set(PDFName.of('DR'), pdfDoc.context.obj({
+      Font: { [customFont.name]: customFont.ref, [liveFont.name]: liveFont.ref }
+    }));
+    form.acroForm.dict.set(PDFName.of('DA'), PDFString.of(`/${liveFont.name} 0 Tf 0 g`));
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
     // --- A. HEADER TEXT INPUTS ---
@@ -172,6 +181,7 @@ export default async function handler(req, res) {
         });
       });
       tf.setFontSize(10);
+      tf.updateAppearances(customFont);
     });
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
@@ -207,9 +217,10 @@ export default async function handler(req, res) {
             x: lengthCoord.x,
             y: lengthCoord.y - 1,
             width: 65, height: 14,
-            borderWidth: 0.5, borderColor: textColor, textColor, font: customFont,
+            borderWidth: 0.5, borderColor: textColor, textColor, font: liveFont,
           });
           lengthField.setFontSize(9);
+          lengthField.updateAppearances(liveFont);
 
         } else {
           const radioGroup = form.createRadioGroup(stepName);
@@ -255,7 +266,7 @@ export default async function handler(req, res) {
         y: codeBox.y + 1,
         width: codeBox.width,
         height: codeBox.height - 2.5,
-        font: customFont,
+        font: liveFont,
         textColor: textColor,
         borderWidth: 0,
       });
@@ -294,6 +305,7 @@ export default async function handler(req, res) {
       }
       if (initialDir) initialSegments.push(initialDir);
       orderingCodeField.setText(initialSegments.join('-'));
+      orderingCodeField.updateAppearances(liveFont);
 
       const stepNames = acroSteps.map(s => s.stepName);
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
@@ -342,41 +354,6 @@ event.value = parts.join("-");`;
 
       form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
     }
-
-    form.updateFieldAppearances(customFont);
-    // --- E. MAKE RADIO EXPORT VALUES ACROBAT-SAFE ---
-    // pdf-lib names each radio on-state "0","1",... and stores real codes in /Opt.
-    // Acrobat's JS doesn't reliably resolve that, so rename on-states to the codes and drop /Opt.
-    form.getFields().forEach((field) => {
-      if (!(field instanceof PDFRadioGroup)) return;
-      const acro = field.acroField;
-      const opt = acro.dict.lookup(PDFName.of('Opt'));
-      if (!opt) return;
-      const codes = opt.asArray().map(o => (o.decodeText ? o.decodeText() : String(o)));
-      const nameFor = (i) => (codes[i] === '' || codes[i] === undefined) ? '__none__' : codes[i];
-
-      acro.getWidgets().forEach((w, i) => {
-        const oldName = PDFName.of(String(i));
-        const newName = PDFName.of(nameFor(i));
-        const ap = w.dict.lookup(PDFName.of('AP'), PDFDict);
-        ['N', 'D'].forEach(k => {
-          const d = ap && ap.lookup(PDFName.of(k));
-          if (d instanceof PDFDict && d.has(oldName)) {
-            d.set(newName, d.get(oldName));
-            d.delete(oldName);
-          }
-        });
-        const as = w.dict.lookup(PDFName.of('AS'));
-        if (as instanceof PDFName && as.toString() === oldName.toString()) w.dict.set(PDFName.of('AS'), newName);
-      });
-
-      const v = acro.dict.lookup(PDFName.of('V'));
-      if (v instanceof PDFName) {
-        const idx = parseInt(v.decodeText(), 10);
-        if (!isNaN(idx)) acro.dict.set(PDFName.of('V'), PDFName.of(nameFor(idx)));
-      }
-      acro.dict.delete(PDFName.of('Opt'));
-    });
 
     const pdfBytes = await pdfDoc.save();
 
