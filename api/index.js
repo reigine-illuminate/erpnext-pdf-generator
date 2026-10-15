@@ -12,9 +12,12 @@ export default async function handler(req, res) {
     const { html, configurator_options } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
+    // 1. FIX: Strip literal "\n" text artifacts injected by the n8n script mapping
+    const cleanHtml = html.replace(/\\n/g, '');
+
     chromium.setGraphicsMode = false;
 
-    // 1. LAUNCH SERVERLESS BROWSER
+    // 2. LAUNCH SERVERLESS BROWSER
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -24,12 +27,43 @@ export default async function handler(req, res) {
     });
 
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
+
+    // 3. FIX: Force strict 8.5x11 print layout, strip Webflow margins, and block ghost pages
+    await page.addStyleTag({
+      content: `
+        @media print {
+          @page { size: 8.5in 11in; margin: 0 !important; }
+          html, body { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            background: white !important; 
+          }
+          .page-wrapper {
+            width: 8.5in !important;
+            height: 11in !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            border: none !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            overflow: hidden !important;
+            position: relative !important;
+          }
+          /* Kills the trailing blank page (Page 4) */
+          .page-wrapper:last-of-type {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+        }
+      `
+    });
 
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 1 });
     await page.emulateMediaType('print');
 
-    // 2. EXTRACT DOM COORDINATES, INJECT PAGINATION & FIND CODE INPUT BOX
+    // 4. EXTRACT DOM COORDINATES, INJECT PAGINATION & FIND CODE INPUT BOX
     const domExtraction = await page.evaluate(() => {
       // --- A. INJECT DYNAMIC PAGINATION ---
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
@@ -98,7 +132,7 @@ export default async function handler(req, res) {
       return { coords, codeBoxCoords };
     });
 
-    // 3. SNAP BASE PDF
+    // 5. SNAP BASE PDF
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
@@ -108,12 +142,10 @@ export default async function handler(req, res) {
 
     await browser.close();
 
-    // 4. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
+    // 6. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
-    // Font is bundled in the repo at /fonts/Lora-Bold.ttf (see vercel.json includeFiles).
-    // subset:false embeds every glyph so text produced later by the calculate script always renders.
     let customFont;
     try {
       const fontPath = path.join(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
@@ -221,7 +253,6 @@ export default async function handler(req, res) {
         borderWidth: 0,
       });
       orderingCodeField.setFontSize(10);
-      // NOTE: Intentionally not read-only, so browsers repaint the value.
 
       // 1. Sort steps by index
       const acroSteps = configurator_options.map(s => ({
@@ -300,8 +331,6 @@ try {
 
       // 7. Ask viewers to redraw field appearances when values change
       form.acroForm.dict.set(PDFName.of('NeedAppearances'), pdfDoc.context.obj(true));
-
-      // (Old step 7 removed: no calculateNow() or per-field Mouse Up / Blur actions.)
     }
 
     form.updateFieldAppearances(customFont);
