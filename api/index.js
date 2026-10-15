@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
-import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFHexString, PDFDict, PDFRadioGroup } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 export default async function handler(req, res) {
@@ -156,11 +156,6 @@ export default async function handler(req, res) {
     const pages = pdfDoc.getPages();
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    const triggerCalcRef = pdfDoc.context.register(pdfDoc.context.obj({
-      S: 'JavaScript',
-      JS: PDFHexString.fromText('try { this.calculateNow(); } catch(e) {}')
-    }));
-
     // --- A. HEADER TEXT INPUTS ---
     const headerConfigs = [
       { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
@@ -304,31 +299,29 @@ export default async function handler(req, res) {
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
       const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      // HACK: Explicitly declare every field so Acrobat's parser registers the calculation dependencies
-      const dependencyDeclarations = stepNames.map(name => `this.getField("${name}");`).join('\n');
-
-      // Formatted precisely without leading spaces or newlines
-      const acroCalcScript = `${dependencyDeclarations}
-var fields = ${JSON.stringify(stepNames)};
+      // Radio on-state names are rewritten to the real codes before save (see step E),
+      // so f.value is the code itself in Acrobat. "__none__" marks a blank-code option.
+      const acroCalcScript = `var fields = ${JSON.stringify(stepNames)};
 var isDir = ${JSON.stringify(isDirFlags)};
 var isLen = ${JSON.stringify(isLenFlags)};
 var parts = [];
 var dirVal = "";
 for (var i = 0; i < fields.length; i++) {
   var f = this.getField(fields[i]);
-  if (f && f.value !== "Off" && f.value !== "") {
-    if (isDir[i]) { 
-      if (dirVal) parts.push(dirVal); 
-      dirVal = f.value; 
-    }
-    else if (isLen[i]) { 
-      parts.push(dirVal + f.value); 
-      dirVal = ""; 
-    }
-    else { 
-      if (dirVal) { parts.push(dirVal); dirVal = ""; }
-      parts.push(f.value); 
-    }
+  if (!f) continue;
+  var v = f.value;
+  if (v === null || v === undefined) continue;
+  v = String(v);
+  if (v === "Off" || v === "" || v === "__none__") continue;
+  if (isDir[i]) {
+    if (dirVal) parts.push(dirVal);
+    dirVal = v;
+  } else if (isLen[i]) {
+    parts.push(dirVal + v);
+    dirVal = "";
+  } else {
+    if (dirVal) { parts.push(dirVal); dirVal = ""; }
+    parts.push(v);
   }
 }
 if (dirVal) parts.push(dirVal);
@@ -341,8 +334,6 @@ event.value = parts.join("-");`;
 
       const aaDict = pdfDoc.context.obj({ C: calcAction });
       orderingCodeField.acroField.dict.set(PDFName.of('AA'), aaDict);
-      orderingCodeField.acroField.getWidgets().forEach(w =>
-        w.dict.set(PDFName.of('AA'), aaDict));
 
       form.acroForm.dict.set(
         PDFName.of('CO'),
@@ -353,6 +344,40 @@ event.value = parts.join("-");`;
     }
 
     form.updateFieldAppearances(customFont);
+    // --- E. MAKE RADIO EXPORT VALUES ACROBAT-SAFE ---
+    // pdf-lib names each radio on-state "0","1",... and stores real codes in /Opt.
+    // Acrobat's JS doesn't reliably resolve that, so rename on-states to the codes and drop /Opt.
+    form.getFields().forEach((field) => {
+      if (!(field instanceof PDFRadioGroup)) return;
+      const acro = field.acroField;
+      const opt = acro.dict.lookup(PDFName.of('Opt'));
+      if (!opt) return;
+      const codes = opt.asArray().map(o => (o.decodeText ? o.decodeText() : String(o)));
+      const nameFor = (i) => (codes[i] === '' || codes[i] === undefined) ? '__none__' : codes[i];
+
+      acro.getWidgets().forEach((w, i) => {
+        const oldName = PDFName.of(String(i));
+        const newName = PDFName.of(nameFor(i));
+        const ap = w.dict.lookup(PDFName.of('AP'), PDFDict);
+        ['N', 'D'].forEach(k => {
+          const d = ap && ap.lookup(PDFName.of(k));
+          if (d instanceof PDFDict && d.has(oldName)) {
+            d.set(newName, d.get(oldName));
+            d.delete(oldName);
+          }
+        });
+        const as = w.dict.lookup(PDFName.of('AS'));
+        if (as instanceof PDFName && as.toString() === oldName.toString()) w.dict.set(PDFName.of('AS'), newName);
+      });
+
+      const v = acro.dict.lookup(PDFName.of('V'));
+      if (v instanceof PDFName) {
+        const idx = parseInt(v.decodeText(), 10);
+        if (!isNaN(idx)) acro.dict.set(PDFName.of('V'), PDFName.of(nameFor(idx)));
+      }
+      acro.dict.delete(PDFName.of('Opt'));
+    });
+
     const pdfBytes = await pdfDoc.save();
 
     return res.status(200).json({ pdf_base64: Buffer.from(pdfBytes).toString('base64') });
