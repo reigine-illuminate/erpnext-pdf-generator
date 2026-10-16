@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const { html, configurator_options, product_slug } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    const cleanHtml = html.replace(/\n/g, '');
+    const cleanHtml = html.replace(/\\n/g, '');
     chromium.setGraphicsMode = false;
 
     // 1. LAUNCH SERVERLESS BROWSER
