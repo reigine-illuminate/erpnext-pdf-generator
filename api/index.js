@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     const { html, configurator_options, product_slug } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
-    const cleanHtml = html.replace(/\\n/g, '');
+    const cleanHtml = html.replace(/\n/g, '');
     chromium.setGraphicsMode = false;
 
     // 1. LAUNCH SERVERLESS BROWSER
@@ -322,6 +322,10 @@ for (var i = 0; i < fields.length; i++) {
   var v = f.value;
   if (v === null || v === undefined) continue;
   v = String(v);
+  
+  // FIX FOR CHROMIUM PDFIUM BUG
+  if (v === "0") v = ""; 
+  
   if (v === "Off" || v === "" || v === "__none__") continue;
   if (isDir[i]) {
     if (dirVal) parts.push(dirVal);
