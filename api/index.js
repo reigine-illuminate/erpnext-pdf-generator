@@ -73,7 +73,6 @@ export default async function handler(req, res) {
         if (totalNo) totalNo.innerText = String(wrappers.length);
       });
 
-      // --- ORDERING CODE RADIO / CHECKBOX COORDS ---
       const items = document.querySelectorAll('[data-step]');
       const coords = [];
 
@@ -103,7 +102,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // --- SPEC ORDERING CODE BOX COORDS ---
       let codeBoxCoords = null;
       const codeBox = document.querySelector('#spec-ordering-code-input');
       if (codeBox) {
@@ -127,8 +125,8 @@ export default async function handler(req, res) {
         }
       }
 
-      // --- NEW: EXTRACT HIGHLIGHTABLE ANCHOR COORDS ---
-      const highlightItems = document.querySelectorAll('[data-highlight], [data-highlight-code]');
+      // --- EXTRACT HIGHLIGHTABLE ANCHOR COORDS ---
+      const highlightItems = document.querySelectorAll('[data-highlight]');
       const highlightCoords = [];
 
       highlightItems.forEach(item => {
@@ -142,15 +140,10 @@ export default async function handler(req, res) {
         const relativeLeft = rect.left - wrapperRect.left;
         const relativeTop = rect.top - wrapperRect.top;
 
-        const rawCode = item.getAttribute('data-highlight') || item.getAttribute('data-highlight-code') || '';
-        const rawStep = item.getAttribute('data-highlight-step') || '';
-        const cleanName = `hl_${rawStep ? 'step_' + rawStep + '_' : ''}${rawCode}`
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]/g, '_');
+        const code = item.getAttribute('data-highlight') || '';
 
         highlightCoords.push({
-          name: cleanName,
-          code: rawCode,
+          code: code.trim(),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
           x: relativeLeft * 0.75,
           y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
@@ -176,6 +169,11 @@ export default async function handler(req, res) {
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
+    // --- STORE HIGHLIGHT COORDINATES IN PDF SUBJECT METADATA (NO COVERING FIELDS) ---
+    if (domExtraction.highlightCoords && domExtraction.highlightCoords.length > 0) {
+      pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
+    }
+
     let customFont;
     try {
       const fontPath = path.resolve(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
@@ -186,9 +184,7 @@ export default async function handler(req, res) {
       customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
     }
 
-    // Register the form font in AcroForm /DR (Acrobat looks fonts up there).
-    const liveFont = customFont; // keep the same font (a base-14 swap turned '-' into '>' in Chrome)
-
+    const liveFont = customFont;
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
     form.acroForm.dict.set(PDFName.of('DR'), pdfDoc.context.obj({
@@ -397,35 +393,6 @@ event.value = parts.join("-");`;
       form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
       form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
     }
-
-    // --- D. INJECT HIGHLIGHT ANCHOR FIELDS ---
-    const highlightCoords = domExtraction.highlightCoords || [];
-    const usedFieldNames = new Set(form.getFields().map(f => f.getName()));
-
-    highlightCoords.forEach(hl => {
-      try {
-        const targetPage = pages[hl.pageIndex] || pages[0];
-        
-        let uniqueName = hl.name;
-        let counter = 1;
-        while (usedFieldNames.has(uniqueName)) {
-          uniqueName = `${hl.name}_${counter++}`;
-        }
-        usedFieldNames.add(uniqueName);
-
-        const anchorField = form.createTextField(uniqueName);
-        anchorField.addToPage(targetPage, {
-          x: hl.x,
-          y: hl.y,
-          width: Math.max(hl.width, 1),
-          height: Math.max(hl.height, 1),
-          borderWidth: 0,
-        });
-        anchorField.enableReadOnly();
-      } catch (err) {
-        console.warn('Failed to inject highlight anchor field:', hl.name, err);
-      }
-    });
 
     const pdfBytes = await pdfDoc.save();
 
