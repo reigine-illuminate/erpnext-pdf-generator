@@ -137,8 +137,18 @@ export default async function handler(req, res) {
         const pageIndex = wrappers.indexOf(pageWrapper);
         const wrapperRect = pageWrapper.getBoundingClientRect();
 
-        const relativeLeft = rect.left - wrapperRect.left;
-        const relativeTop = rect.top - wrapperRect.top;
+        let relativeLeft = rect.left - wrapperRect.left;
+        let relativeTop = rect.top - wrapperRect.top;
+        let elemWidth = rect.width;
+        let elemHeight = rect.height;
+
+        // If inside the flextable, expand across the entire table row!
+        const tableContainer = item.closest('#spec-dynamic-table-container');
+        if (tableContainer) {
+          const contRect = tableContainer.getBoundingClientRect();
+          relativeLeft = contRect.left - wrapperRect.left;
+          elemWidth = contRect.width;
+        }
 
         const code = item.getAttribute('data-highlight') || '';
 
@@ -146,9 +156,10 @@ export default async function handler(req, res) {
           code: code.trim(),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
           x: relativeLeft * 0.75,
-          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
-          width: rect.width * 0.75,
-          height: rect.height * 0.75
+          y: 792 - (relativeTop * 0.75) - (elemHeight * 0.75),
+          width: elemWidth * 0.75,
+          height: elemHeight * 0.75,
+          isRow: !!tableContainer
         });
       });
 
