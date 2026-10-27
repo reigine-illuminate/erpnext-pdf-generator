@@ -73,6 +73,7 @@ export default async function handler(req, res) {
         if (totalNo) totalNo.innerText = String(wrappers.length);
       });
 
+      // --- ORDERING CODE RADIO / CHECKBOX COORDS ---
       const items = document.querySelectorAll('[data-step]');
       const coords = [];
 
@@ -102,6 +103,7 @@ export default async function handler(req, res) {
         });
       });
 
+      // --- SPEC ORDERING CODE BOX COORDS ---
       let codeBoxCoords = null;
       const codeBox = document.querySelector('#spec-ordering-code-input');
       if (codeBox) {
@@ -125,7 +127,39 @@ export default async function handler(req, res) {
         }
       }
 
-      return { coords, codeBoxCoords };
+      // --- NEW: EXTRACT HIGHLIGHTABLE ANCHOR COORDS ---
+      const highlightItems = document.querySelectorAll('[data-highlight], [data-highlight-code]');
+      const highlightCoords = [];
+
+      highlightItems.forEach(item => {
+        const rect = item.getBoundingClientRect();
+        const pageWrapper = item.closest('.page-wrapper');
+        if (!pageWrapper) return;
+
+        const pageIndex = wrappers.indexOf(pageWrapper);
+        const wrapperRect = pageWrapper.getBoundingClientRect();
+
+        const relativeLeft = rect.left - wrapperRect.left;
+        const relativeTop = rect.top - wrapperRect.top;
+
+        const rawCode = item.getAttribute('data-highlight') || item.getAttribute('data-highlight-code') || '';
+        const rawStep = item.getAttribute('data-highlight-step') || '';
+        const cleanName = `hl_${rawStep ? 'step_' + rawStep + '_' : ''}${rawCode}`
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, '_');
+
+        highlightCoords.push({
+          name: cleanName,
+          code: rawCode,
+          pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
+          x: relativeLeft * 0.75,
+          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
+          width: rect.width * 0.75,
+          height: rect.height * 0.75
+        });
+      });
+
+      return { coords, codeBoxCoords, highlightCoords };
     });
 
     // 3. SNAP BASE PDF
@@ -309,8 +343,6 @@ export default async function handler(req, res) {
       const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
       const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      // Radio on-state names are rewritten to the real codes before save (see step E),
-      // so f.value is the code itself in Acrobat. "__none__" marks a blank-code option.
       const acroCalcScript = `var fields = ${JSON.stringify(stepNames)};
 var isDir = ${JSON.stringify(isDirFlags)};
 var isLen = ${JSON.stringify(isLenFlags)};
@@ -323,7 +355,6 @@ for (var i = 0; i < fields.length; i++) {
   if (v === null || v === undefined) continue;
   v = String(v);
   
-  // FIX FOR CHROMIUM PDFIUM BUG
   if (v === "0") v = ""; 
   
   if (v === "Off" || v === "" || v === "__none__") continue;
@@ -341,7 +372,6 @@ for (var i = 0; i < fields.length; i++) {
 if (dirVal) parts.push(dirVal);
 event.value = parts.join("-");`;
 
-      // Store the script as a stream (same as the InDesign file that works in Acrobat)
       const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(acroCalcScript));
       const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
         S: 'JavaScript',
@@ -350,8 +380,6 @@ event.value = parts.join("-");`;
 
       orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
 
-      // Merge field + widget into ONE object (like InDesign does) so the calculated field
-      // has no /Kids. Then point /Fields and /CO at that merged object.
       const fieldRef = orderingCodeField.acroField.ref;
       const fieldDict = orderingCodeField.acroField.dict;
       const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
@@ -369,6 +397,35 @@ event.value = parts.join("-");`;
       form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
       form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
     }
+
+    // --- D. INJECT HIGHLIGHT ANCHOR FIELDS ---
+    const highlightCoords = domExtraction.highlightCoords || [];
+    const usedFieldNames = new Set(form.getFields().map(f => f.getName()));
+
+    highlightCoords.forEach(hl => {
+      try {
+        const targetPage = pages[hl.pageIndex] || pages[0];
+        
+        let uniqueName = hl.name;
+        let counter = 1;
+        while (usedFieldNames.has(uniqueName)) {
+          uniqueName = `${hl.name}_${counter++}`;
+        }
+        usedFieldNames.add(uniqueName);
+
+        const anchorField = form.createTextField(uniqueName);
+        anchorField.addToPage(targetPage, {
+          x: hl.x,
+          y: hl.y,
+          width: Math.max(hl.width, 1),
+          height: Math.max(hl.height, 1),
+          borderWidth: 0,
+        });
+        anchorField.enableReadOnly();
+      } catch (err) {
+        console.warn('Failed to inject highlight anchor field:', hl.name, err);
+      }
+    });
 
     const pdfBytes = await pdfDoc.save();
 
