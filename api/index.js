@@ -11,13 +11,14 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST' });
 
   try {
-    const { html, configurator_options, product_slug } = req.body;
+    // 1. EXTRACT BRAND FROM PAYLOAD
+    const { html, configurator_options, product_slug, brand } = req.body;
     if (!html) return res.status(400).json({ error: 'Missing html in request body' });
 
     const cleanHtml = html.replace(/\\n/g, '');
     chromium.setGraphicsMode = false;
 
-    // 1. LAUNCH SERVERLESS BROWSER
+    // 2. LAUNCH SERVERLESS BROWSER
     const browser = await puppeteer.launch({
       args: chromium.args,
       defaultViewport: chromium.defaultViewport,
@@ -63,12 +64,12 @@ export default async function handler(req, res) {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
-    // 2. EXTRACT DOM COORDINATES
+    // 3. EXTRACT DOM COORDINATES
     const domExtraction = await page.evaluate(() => {
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
       wrappers.forEach((wrapper, index) => {
-        const pageNo = wrapper.querySelector('#spec-current-page-no');
-        const totalNo = wrapper.querySelector('#spec-total-pages-count');
+        const pageNo = wrapper.querySelector('#current-page-no') || wrapper.querySelector('#spec-current-page-no');
+        const totalNo = wrapper.querySelector('#total-page-no') || wrapper.querySelector('#spec-total-pages-count');
         if (pageNo) pageNo.innerText = String(index + 1);
         if (totalNo) totalNo.innerText = String(wrappers.length);
       });
@@ -125,7 +126,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // --- EXTRACT HIGHLIGHTABLE ANCHOR COORDS ---
       const highlightItems = document.querySelectorAll('[data-highlight]');
       const highlightCoords = [];
 
@@ -142,7 +142,6 @@ export default async function handler(req, res) {
         let elemWidth = rect.width;
         let elemHeight = rect.height;
 
-        // If inside the flextable, expand across the entire table row!
         const tableContainer = item.closest('#spec-dynamic-table-container');
         if (tableContainer) {
           const contRect = tableContainer.getBoundingClientRect();
@@ -166,21 +165,25 @@ export default async function handler(req, res) {
       return { coords, codeBoxCoords, highlightCoords };
     });
 
-    // 3. SNAP BASE PDF
+    // 4. DYNAMIC MARGINS & SNAP BASE PDF
+    let pdfMargins = { top: 0, right: 0, bottom: 0, left: 0 };
+    if (brand === 'illumenate') {
+      pdfMargins = { top: '36px', right: '36px', bottom: '36px', left: '36px' };
+    }
+
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
-      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      margin: pdfMargins,
       preferCSSPageSize: true
     });
 
     await browser.close();
 
-    // 4. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
+    // 5. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
-    // --- STORE HIGHLIGHT COORDINATES IN PDF SUBJECT METADATA (NO COVERING FIELDS) ---
     if (domExtraction.highlightCoords && domExtraction.highlightCoords.length > 0) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
@@ -204,20 +207,35 @@ export default async function handler(req, res) {
     form.acroForm.dict.set(PDFName.of('DA'), PDFString.of(`/${liveFont.name} 0 Tf 0 g`));
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // --- A. HEADER TEXT INPUTS ---
-    const headerConfigs = [
-      { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
-      { name: 'fixture_type', x: 267, y: 705, width: 130, height: 16 },
-      { name: 'project_location', x: 442, y: 705, width: 140, height: 16 }
-    ];
+    // --- A. DYNAMIC HEADER TEXT INPUTS ---
+    let headerConfigs = [];
+    
+    if (brand === 'illumenate') {
+      // ilLumenate Layout Coordinates (based on provided PDF template)
+      headerConfigs = [
+        { name: 'project_name', x: 65, y: 720, width: 220, height: 16 },
+        { name: 'fixture_type', x: 310, y: 720, width: 140, height: 16 },
+        { name: 'project_location', x: 460, y: 720, width: 140, height: 16 }
+      ];
+    } else {
+      // Original 206 Lighting Layout Coordinates
+      headerConfigs = [
+        { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
+        { name: 'fixture_type', x: 267, y: 705, width: 130, height: 16 },
+        { name: 'project_location', x: 442, y: 705, width: 140, height: 16 }
+      ];
+    }
 
     headerConfigs.forEach(cfg => {
       const tf = form.createTextField(cfg.name);
       pages.forEach(p => {
-        tf.addToPage(p, {
-          x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-          borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: customFont,
-        });
+        // Only add header fields to the first and second pages to prevent overflow crashes
+        if (pages.indexOf(p) < 2) {
+            tf.addToPage(p, {
+              x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
+              borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: customFont,
+            });
+        }
       });
       tf.setFontSize(10);
       tf.updateAppearances(customFont);
