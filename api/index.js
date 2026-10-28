@@ -214,9 +214,9 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       // User-provided precise Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 62, y: 48, width: 187.2, height: 16 },
-        { name: 'fixture_type', x: 310, y: 48, width: 130, height: 16 },
-        { name: 'project_location', x: 351, y: 48, width: 139, height: 16 }
+        { name: 'project_name', x: 72, y: 48, width: 187.2, height: 16 },
+        { name: 'fixture_type', x: 330, y: 48, width: 130, height: 16 },
+        { name: 'project_location', x: 451, y: 48, width: 139, height: 16 }
       ];
     } else {
       // 206 Lighting Coordinates
