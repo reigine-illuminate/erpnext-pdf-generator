@@ -208,15 +208,15 @@ export default async function handler(req, res) {
     form.acroForm.dict.set(PDFName.of('DA'), PDFString.of(`/${liveFont.name} 0 Tf 0 g`));
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
 
-    // --- A. DYNAMIC HEADER TEXT INPUTS ---
+    // --- A. DYNAMIC PROJECT DETAILS TEXT INPUTS ---
     let headerConfigs = [];
     
     if (brand === 'illumenate') {
       // User-provided precise Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 52, y: 738.9, width: 187.2, height: 16 },
-        { name: 'fixture_type', x: 296, y: 738.9, width: 130, height: 16 },
-        { name: 'project_location', x: 471.8, y: 738.9, width: 139, height: 16 }
+        { name: 'project_name', x: 57, y: 40, width: 187.2, height: 16 },
+        { name: 'fixture_type', x: 301, y: 50, width: 130, height: 16 },
+        { name: 'project_location', x: 40, y: 738.9, width: 139, height: 16 }
       ];
     } else {
       // 206 Lighting Coordinates
