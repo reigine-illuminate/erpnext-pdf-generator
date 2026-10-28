@@ -30,14 +30,11 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
-    // 3. DYNAMIC MARGINS & SIZING (36px = 0.5 inches)
+    // 3. DYNAMIC CSS (Letting Webflow handle the layout, forcing standard 8.5x11 canvas)
     await page.addStyleTag({
       content: `
         @media print {
-          @page { 
-            size: 8.5in 11in; 
-            margin: ${brand === 'illumenate' ? '0.5in' : '0'} !important; 
-          }
+          @page { size: 8.5in 11in; margin: 0 !important; }
           html, body { 
             margin: 0 !important; 
             padding: 0 !important; 
@@ -46,8 +43,8 @@ export default async function handler(req, res) {
             print-color-adjust: exact !important;
           }
           .page-wrapper {
-            width: ${brand === 'illumenate' ? '7.5in' : '8.5in'} !important;
-            height: ${brand === 'illumenate' ? '10in' : '11in'} !important;
+            width: 8.5in !important;
+            height: 11in !important;
             margin: 0 !important;
             padding: 0 !important;
             box-shadow: none !important;
@@ -68,12 +65,8 @@ export default async function handler(req, res) {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
-    // 4. EXTRACT DOM COORDINATES WITH MARGIN OFFSETS
-    const domExtraction = await page.evaluate((brandName) => {
-      const marginOffset = brandName === 'illumenate' ? 36 : 0; // 0.5in = 36 points
-      const pageTopY = 792 - marginOffset;
-      const pageLeftX = marginOffset;
-
+    // 4. EXTRACT DOM COORDINATES (No fake margin offsets needed anymore)
+    const domExtraction = await page.evaluate(() => {
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
       wrappers.forEach((wrapper, index) => {
         const pageNo = wrapper.querySelector('#current-page-no') || wrapper.querySelector('#spec-current-page-no');
@@ -104,8 +97,8 @@ export default async function handler(req, res) {
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-          x: pageLeftX + (relativeLeft * 0.75),
-          y: pageTopY - (relativeTop * 0.75) - (rect.height * 0.75),
+          x: relativeLeft * 0.75,
+          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
           width: rect.width * 0.75,
           height: rect.height * 0.75
         });
@@ -122,8 +115,8 @@ export default async function handler(req, res) {
 
           codeBoxCoords = {
             pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-            x: pageLeftX + ((rect.left - wrapperRect.left) * 0.75),
-            y: pageTopY - ((rect.top - wrapperRect.top) * 0.75) - (rect.height * 0.75),
+            x: (rect.left - wrapperRect.left) * 0.75,
+            y: 792 - ((rect.top - wrapperRect.top) * 0.75) - (rect.height * 0.75),
             width: rect.width * 0.75,
             height: rect.height * 0.75
           };
@@ -162,8 +155,8 @@ export default async function handler(req, res) {
         highlightCoords.push({
           code: code.trim(),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-          x: pageLeftX + (relativeLeft * 0.75),
-          y: pageTopY - (relativeTop * 0.75) - (elemHeight * 0.75),
+          x: relativeLeft * 0.75,
+          y: 792 - (relativeTop * 0.75) - (elemHeight * 0.75),
           width: elemWidth * 0.75,
           height: elemHeight * 0.75,
           isRow: !!tableContainer
@@ -171,12 +164,13 @@ export default async function handler(req, res) {
       });
 
       return { coords, codeBoxCoords, highlightCoords };
-    }, brand);
+    });
 
-    // 5. SNAP BASE PDF (Margins dictated by @page CSS via preferCSSPageSize)
+    // 5. SNAP BASE PDF (Margins dictated by 0px full-bleed setting)
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true
     });
 
@@ -218,7 +212,7 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       // User-provided precise Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 52, y: 738.9, width: 187.2, height: 16 },
+        { name: 'project_name', x: 52, y: 50, width: 187.2, height: 16 },
         { name: 'fixture_type', x: 296, y: 738.9, width: 130, height: 16 },
         { name: 'project_location', x: 471.8, y: 738.9, width: 139, height: 16 }
       ];
