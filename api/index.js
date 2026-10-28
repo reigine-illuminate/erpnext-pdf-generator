@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
-    // 3. DYNAMIC CSS (Letting Webflow handle the layout, forcing standard 8.5x11 canvas)
+    // 3. DYNAMIC CSS (Restoring your Webflow 36px Padding!)
     await page.addStyleTag({
       content: `
         @media print {
@@ -46,7 +46,9 @@ export default async function handler(req, res) {
             width: 8.5in !important;
             height: 11in !important;
             margin: 0 !important;
-            padding: 0 !important;
+            /* Dynamically apply 36px padding for ilLumenate */
+            padding: ${brand === 'illumenate' ? '36px' : '0'} !important;
+            box-sizing: border-box !important;
             box-shadow: none !important;
             border: none !important;
             page-break-after: always !important;
@@ -65,7 +67,7 @@ export default async function handler(req, res) {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
-    // 4. EXTRACT DOM COORDINATES (No fake margin offsets needed anymore)
+    // 4. EXTRACT DOM COORDINATES
     const domExtraction = await page.evaluate(() => {
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
       wrappers.forEach((wrapper, index) => {
@@ -212,7 +214,7 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       // User-provided precise Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 52, y: 50, width: 187.2, height: 16 },
+        { name: 'project_name', x: 52, y: 738.9, width: 187.2, height: 16 },
         { name: 'fixture_type', x: 296, y: 738.9, width: 130, height: 16 },
         { name: 'project_location', x: 471.8, y: 738.9, width: 139, height: 16 }
       ];
