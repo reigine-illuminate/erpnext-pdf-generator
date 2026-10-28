@@ -213,9 +213,9 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       // ilLumenate Layout Coordinates (based on provided PDF template)
       headerConfigs = [
-        { name: 'project_name', x: 65, y: 720, width: 220, height: 16 },
-        { name: 'fixture_type', x: 310, y: 720, width: 140, height: 16 },
-        { name: 'project_location', x: 460, y: 720, width: 140, height: 16 }
+        { name: 'project_name', x: 65, y: 100, width: 220, height: 16 },
+        { name: 'fixture_type', x: 310, y: 100, width: 140, height: 16 },
+        { name: 'project_location', x: 460, y: 100, width: 140, height: 16 }
       ];
     } else {
       // Original 206 Lighting Layout Coordinates
