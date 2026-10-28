@@ -212,13 +212,13 @@ export default async function handler(req, res) {
       // Calculated Footer Coordinates
       headerConfigs = [
         // Starts after "PROJECT NAME" text, spans until "FIXTURE TYPE"
-        { name: 'project_name', x: 77, y: 46, width: 187, height: 14 },
+        { name: 'project_name', x: 78, y: 46, width: 189, height: 14 },
         
         // Starts after "FIXTURE TYPE" text, spans until "LOCATION"
-        { name: 'fixture_type', x: 325, y: 46, width: 110, height: 14 },
+        { name: 'fixture_type', x: 323, y: 46, width: 100, height: 14 },
         
         // Starts after "LOCATION" text, spans to the 36px right margin
-        { name: 'project_location', x: 465, y: 46, width: 110, height: 14 }
+        { name: 'project_location', x: 470, y: 46, width: 110, height: 14 }
       ];
     } else {
       // 206 Lighting Coordinates
