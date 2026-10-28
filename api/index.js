@@ -30,10 +30,14 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
+    // 3. DYNAMIC MARGINS & SIZING (36px = 0.5 inches)
     await page.addStyleTag({
       content: `
         @media print {
-          @page { size: 8.5in 11in; margin: 0 !important; }
+          @page { 
+            size: 8.5in 11in; 
+            margin: ${brand === 'illumenate' ? '0.5in' : '0'} !important; 
+          }
           html, body { 
             margin: 0 !important; 
             padding: 0 !important; 
@@ -42,8 +46,8 @@ export default async function handler(req, res) {
             print-color-adjust: exact !important;
           }
           .page-wrapper {
-            width: 8.5in !important;
-            height: 11in !important;
+            width: ${brand === 'illumenate' ? '7.5in' : '8.5in'} !important;
+            height: ${brand === 'illumenate' ? '10in' : '11in'} !important;
             margin: 0 !important;
             padding: 0 !important;
             box-shadow: none !important;
@@ -64,8 +68,12 @@ export default async function handler(req, res) {
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
     await page.emulateMediaType('print');
 
-    // 3. EXTRACT DOM COORDINATES
-    const domExtraction = await page.evaluate(() => {
+    // 4. EXTRACT DOM COORDINATES WITH MARGIN OFFSETS
+    const domExtraction = await page.evaluate((brandName) => {
+      const marginOffset = brandName === 'illumenate' ? 36 : 0; // 0.5in = 36 points
+      const pageTopY = 792 - marginOffset;
+      const pageLeftX = marginOffset;
+
       const wrappers = Array.from(document.querySelectorAll('.page-wrapper'));
       wrappers.forEach((wrapper, index) => {
         const pageNo = wrapper.querySelector('#current-page-no') || wrapper.querySelector('#spec-current-page-no');
@@ -96,8 +104,8 @@ export default async function handler(req, res) {
           step: item.getAttribute('data-step'),
           code: item.getAttribute('data-code'),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-          x: relativeLeft * 0.75,
-          y: 792 - (relativeTop * 0.75) - (rect.height * 0.75),
+          x: pageLeftX + (relativeLeft * 0.75),
+          y: pageTopY - (relativeTop * 0.75) - (rect.height * 0.75),
           width: rect.width * 0.75,
           height: rect.height * 0.75
         });
@@ -114,8 +122,8 @@ export default async function handler(req, res) {
 
           codeBoxCoords = {
             pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-            x: (rect.left - wrapperRect.left) * 0.75,
-            y: 792 - ((rect.top - wrapperRect.top) * 0.75) - (rect.height * 0.75),
+            x: pageLeftX + ((rect.left - wrapperRect.left) * 0.75),
+            y: pageTopY - ((rect.top - wrapperRect.top) * 0.75) - (rect.height * 0.75),
             width: rect.width * 0.75,
             height: rect.height * 0.75
           };
@@ -154,8 +162,8 @@ export default async function handler(req, res) {
         highlightCoords.push({
           code: code.trim(),
           pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
-          x: relativeLeft * 0.75,
-          y: 792 - (relativeTop * 0.75) - (elemHeight * 0.75),
+          x: pageLeftX + (relativeLeft * 0.75),
+          y: pageTopY - (relativeTop * 0.75) - (elemHeight * 0.75),
           width: elemWidth * 0.75,
           height: elemHeight * 0.75,
           isRow: !!tableContainer
@@ -163,24 +171,18 @@ export default async function handler(req, res) {
       });
 
       return { coords, codeBoxCoords, highlightCoords };
-    });
+    }, brand);
 
-    // 4. DYNAMIC MARGINS & SNAP BASE PDF
-    let pdfMargins = { top: 0, right: 0, bottom: 0, left: 0 };
-    if (brand === 'illumenate') {
-      pdfMargins = { top: '36px', right: '36px', bottom: '36px', left: '36px' };
-    }
-
+    // 5. SNAP BASE PDF (Margins dictated by @page CSS via preferCSSPageSize)
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
-      margin: pdfMargins,
       preferCSSPageSize: true
     });
 
     await browser.close();
 
-    // 5. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
+    // 6. LOAD PDF-LIB TO STAMP INTERACTIVE ACROFORMS
     const pdfDoc = await PDFDocument.load(pdfBuffer);
     pdfDoc.registerFontkit(fontkit);
 
@@ -188,14 +190,17 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
+    // 7. DYNAMIC FONT LOADING
     let customFont;
     try {
-      const fontPath = path.resolve(process.cwd(), 'fonts', 'NotoSerif-SemiBold.ttf');
+      const fontFileName = brand === 'illumenate' ? 'Manrope-SemiBold.ttf' : 'NotoSerif-SemiBold.ttf';
+      const fontPath = path.resolve(process.cwd(), 'fonts', fontFileName);
       const fontBytes = fs.readFileSync(fontPath);
       customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
-      console.log('Falling back to built-in Times Roman:', err.message);
-      customFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+      console.log('Falling back to built-in font:', err.message);
+      const fallbackFont = brand === 'illumenate' ? StandardFonts.HelveticaBold : StandardFonts.TimesRoman;
+      customFont = await pdfDoc.embedFont(fallbackFont);
     }
 
     const liveFont = customFont;
@@ -211,14 +216,14 @@ export default async function handler(req, res) {
     let headerConfigs = [];
     
     if (brand === 'illumenate') {
-      // ilLumenate Layout Coordinates (based on provided PDF template)
+      // User-provided precise Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 65, y: 100, width: 220, height: 16 },
-        { name: 'fixture_type', x: 310, y: 100, width: 140, height: 16 },
-        { name: 'project_location', x: 460, y: 100, width: 140, height: 16 }
+        { name: 'project_name', x: 52, y: 738.9, width: 187.2, height: 16 },
+        { name: 'fixture_type', x: 296, y: 738.9, width: 130, height: 16 },
+        { name: 'project_location', x: 471.8, y: 738.9, width: 139, height: 16 }
       ];
     } else {
-      // Original 206 Lighting Layout Coordinates
+      // 206 Lighting Coordinates
       headerConfigs = [
         { name: 'project_name', x: 79, y: 705, width: 130, height: 16 },
         { name: 'fixture_type', x: 267, y: 705, width: 130, height: 16 },
@@ -229,7 +234,6 @@ export default async function handler(req, res) {
     headerConfigs.forEach(cfg => {
       const tf = form.createTextField(cfg.name);
       pages.forEach(p => {
-        // Only add header fields to the first and second pages to prevent overflow crashes
         if (pages.indexOf(p) < 2) {
             tf.addToPage(p, {
               x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
