@@ -187,23 +187,20 @@ export default async function handler(req, res) {
     }
 
     // 7. DYNAMIC FONT LOADING
-    let customFont;
-    try {
-      const fontFileName = brand === 'illumenate' ? 'Manrope-SemiBold.ttf' : 'NotoSerif-SemiBold.ttf';
-      const fontPath = path.resolve(process.cwd(), 'fonts', fontFileName);
-      const fontBytes = fs.readFileSync(fontPath);
-      customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
-    } catch (err) {
-      console.log('Falling back to built-in font:', err.message);
-      const fallbackFont = brand === 'illumenate' ? StandardFonts.HelveticaBold : StandardFonts.TimesRoman;
-      customFont = await pdfDoc.embedFont(fallbackFont);
-    }
+    // Use Standard PDF fonts for interactive fields to prevent glyph encoding corruption.
+    // Puppeteer already rendered the custom Webflow fonts in the background!
+    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    
+    // ilLumenate gets clean sans-serif (Helvetica), 206 gets serif (Times)
+    const liveFont = brand === 'illumenate' ? helvetica : timesRoman;
 
-    const liveFont = customFont;
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
+    
+    // Register the standard font in the AcroForm Default Resources
     form.acroForm.dict.set(PDFName.of('DR'), pdfDoc.context.obj({
-      Font: { [customFont.name]: customFont.ref, [liveFont.name]: liveFont.ref }
+      Font: { [liveFont.name]: liveFont.ref }
     }));
     form.acroForm.dict.set(PDFName.of('DA'), PDFString.of(`/${liveFont.name} 0 Tf 0 g`));
     const textColor = rgb(36 / 255, 36 / 255, 2 / 255);
@@ -238,12 +235,12 @@ export default async function handler(req, res) {
         if (pages.indexOf(p) < 2) {
             tf.addToPage(p, {
               x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-              borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: customFont,
+              borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: liveFont,
             });
         }
       });
       tf.setFontSize(10);
-      tf.updateAppearances(customFont);
+      tf.updateAppearances(liveFont);
     });
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
