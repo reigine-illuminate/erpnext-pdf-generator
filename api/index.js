@@ -212,11 +212,16 @@ export default async function handler(req, res) {
     let headerConfigs = [];
     
     if (brand === 'illumenate') {
-      // User-provided precise Coordinates
+      // Calculated Footer Coordinates
       headerConfigs = [
-        { name: 'project_name', x: 82, y: 48, width: 187.2, height: 16 },
-        { name: 'fixture_type', x: 320, y: 48, width: 75, height: 16 },
-        { name: 'project_location', x: 500, y: 48, width: 75, height: 16 }
+        // Starts after "PROJECT NAME" text, spans until "FIXTURE TYPE"
+        { name: 'project_name', x: 105, y: 46, width: 187, height: 14 },
+        
+        // Starts after "FIXTURE TYPE" text, spans until "LOCATION"
+        { name: 'fixture_type', x: 385, y: 46, width: 100, height: 14 },
+        
+        // Starts after "LOCATION" text, spans to the 36px right margin
+        { name: 'project_location', x: 525, y: 46, width: 100, height: 14 }
       ];
     } else {
       // 206 Lighting Coordinates
