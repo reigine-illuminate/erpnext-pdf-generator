@@ -278,7 +278,6 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
           lengthField.updateAppearances(liveFont);
 
         } else {
-          } else {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
@@ -288,49 +287,31 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
           const isIllumenate = brand === 'illumenate';
           // #006833 converted to RGB (0/255, 104/255, 51/255)
           const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
-          // Set border to 0 for ilLumenate so the HTML square shows through!
+          // Borderless for ilLumenate, standard for 206
           const radioBorder = isIllumenate ? 0 : 0.5;
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
+            
+            // For ilLumenate, shrink the clickable PDF box by 2px on all sides 
+            // so the fill dot sits perfectly centered inside the 10x10 HTML square
+            const finalX = isIllumenate ? coord.x + 1.5 : coord.x;
+            const finalY = isIllumenate ? coord.y + 1.5 : coord.y;
+            const finalWidth = isIllumenate ? (coord.width || 10) - 3 : (coord.width || 7);
+            const finalHeight = isIllumenate ? (coord.height || 10) - 3 : (coord.height || 7);
+
             radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, 
-              y: coord.y, 
-              width: coord.width || 10, 
-              height: coord.height || 10,
+              x: finalX, 
+              y: finalY, 
+              width: finalWidth, 
+              height: finalHeight,
               borderWidth: radioBorder, 
               borderColor: radioColor,
-              textColor: radioColor, // Colors the inner fill/dot
+              textColor: radioColor, // This sets the color of the inner fill dot!
             });
           });
 
-          // --- AUTO-SELECT LOGIC (This naturally handles the Series button!) ---
-          if (step.is_required == 1 || step.is_required === true) {
-            if (allowedValues.length === 1) {
-              // If there is only 1 option (like the Series step), select it automatically
-              defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
-            } else {
-              allowedValues.forEach((valObj) => {
-                if (valObj.is_default === 1 && !defaultSelectedCode) {
-                  defaultSelectedCode = String(valObj.code || valObj.value);
-                }
-              });
-            }
-          }
-
-          if (defaultSelectedCode) {
-            try { radioGroup.select(defaultSelectedCode); } catch (e) {}
-          }
-        }
-
-          stepCoords.forEach((coord) => {
-            const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
-            radioGroup.addOptionToPage(coord.code, targetPage, {
-              x: coord.x, y: coord.y, width: coord.width || 7, height: coord.height || 7,
-              borderWidth: 0.5, borderColor: textColor,
-            });
-          });
-
+          // --- AUTO-SELECT LOGIC ---
           if (step.is_required == 1 || step.is_required === true) {
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
