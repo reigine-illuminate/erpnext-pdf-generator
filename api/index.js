@@ -80,7 +80,6 @@ export default async function handler(req, res) {
       const coords = [];
 
       items.forEach(item => {
-        // Look for the specific circle divs first, fallback to the wrapper
         const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-btn') || item.querySelector('.ordering-code-chkbx') || item;
 
         const rect = chkbx.getBoundingClientRect();
@@ -127,7 +126,7 @@ export default async function handler(req, res) {
 
       // --- ILLUMENATE: INDIVIDUAL SECTION INPUTS ---
       let partNoInputCoords = [];
-      const partNoInputs = document.querySelectorAll('#part-no-code-input');
+      const partNoInputs = document.querySelectorAll('#part-no-code-input, .part-no-code-input');
       partNoInputs.forEach(input => {
         const rect = input.getBoundingClientRect();
         const pageWrapper = input.closest('.page-wrapper');
@@ -135,7 +134,7 @@ export default async function handler(req, res) {
           const wrapperRect = pageWrapper.getBoundingClientRect();
           const pageIndex = wrappers.indexOf(pageWrapper);
           
-          const section = input.closest('.part-no-section');
+          const section = input.closest('.part-no-section') || input.closest('[class*="part-no-section"]');
           let step = null;
           if (section) {
             const firstRadio = section.querySelector('[data-step]');
@@ -155,10 +154,8 @@ export default async function handler(req, res) {
               step: step,
               pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
               x: (rect.left - wrapperRect.left) * 0.75,
-              // FIX: Nudge up by 1px
               y: fieldY + 1,
               width: rect.width * 0.75,
-              // FIX: Make 2px shorter
               height: fieldH - 2
             });
             input.style.color = 'transparent';
@@ -223,13 +220,12 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING (Restored Custom Fonts!)
+    // 7. DYNAMIC FONT LOADING 
     let customFont;
     try {
       const fontFileName = brand === 'illumenate' ? 'Manrope-SemiBold.ttf' : 'NotoSerif-SemiBold.ttf';
       const fontPath = path.resolve(process.cwd(), 'fonts', fontFileName);
       const fontBytes = fs.readFileSync(fontPath);
-      // subset: false helps prevent glyph corruption for standard letters
       customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
     } catch (err) {
       console.log('Falling back to built-in font:', err.message);
@@ -328,9 +324,9 @@ export default async function handler(req, res) {
           const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
           const radioBorder = 0.5;
           
-          // FIX: Nudge controls for radio buttons! If it moves too far left, change -12 to -8.
-          const radioOffsetX = isIllumenate ? -12 : 0;
-          const radioOffsetY = isIllumenate ? -1.5 : 0;
+          // FIX: Nudge removed! We trust the Webflow DOM extraction completely.
+          const radioOffsetX = 0;
+          const radioOffsetY = 0;
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
@@ -338,7 +334,6 @@ export default async function handler(req, res) {
             const finalX = coord.x + radioOffsetX;
             const finalY = coord.y + radioOffsetY;
             
-            // Reverted back to 10px exactly
             const finalWidth = isIllumenate ? 10 : (coord.width || 7);
             const finalHeight = isIllumenate ? 10 : (coord.height || 7);
 
@@ -392,13 +387,10 @@ export default async function handler(req, res) {
           });
           displayField.setFontSize(10);
           
-          // Center align the text
           displayField.acroField.dict.set(PDFName.of('Q'), pdfDoc.context.obj(1));
           
-          // FIX: Add the ReadOnly flag (1) to prevent manual typing in calculation fields
-          displayField.acroField.dict.set(PDFName.of('Ff'), pdfDoc.context.obj(1));
+          // FIX: ReadOnly flag removed so the blue text box highlight returns visually!
           
-          // Script listens to the corresponding step radio group
           const calcScript = `
             var v = this.getField("step_${coord.step}").value;
             if (v === null || v === "Off" || v === "__none__") {
@@ -436,7 +428,7 @@ export default async function handler(req, res) {
       
     } else {
       
-      // 206 LIGHTING LOGIC (Unchanged)
+      // 206 LIGHTING LOGIC
       const codeBox = domExtraction.codeBoxCoords;
       if (codeBox && Array.isArray(configurator_options)) {
         const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
