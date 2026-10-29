@@ -263,7 +263,8 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
 
         if (stepCoords.length === 0) return;
 
-        if (step.option_type === "Length") {
+        // ONLY use the Text Field logic for Length if the brand is NOT ilLumenate
+        if (step.option_type === "Length" && brand !== 'illumenate') {
           const lengthCoord = stepCoords[0];
           const targetPage = pages[lengthCoord.pageIndex] || pages[pages.length - 1];
           const lengthField = form.createTextField(stepName);
@@ -278,6 +279,7 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
           lengthField.updateAppearances(liveFont);
 
         } else {
+          // For all other steps (AND ilLumenate's Length step!), create standard Radio Buttons
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
@@ -293,12 +295,11 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             
-            // For ilLumenate, shrink the clickable PDF box by 2px on all sides 
-            // so the fill dot sits perfectly centered inside the 10x10 HTML square
-            const finalX = isIllumenate ? coord.x + 1.5 : coord.x;
-            const finalY = isIllumenate ? coord.y + 1.5 : coord.y;
-            const finalWidth = isIllumenate ? (coord.width || 10) - 3 : (coord.width || 7);
-            const finalHeight = isIllumenate ? (coord.height || 10) - 3 : (coord.height || 7);
+            // Restored to exact 10px coordinates (no offset/shrinking needed for circles!)
+            const finalX = coord.x;
+            const finalY = coord.y;
+            const finalWidth = coord.width || (isIllumenate ? 10 : 7);
+            const finalHeight = coord.height || (isIllumenate ? 10 : 7);
 
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: finalX, 
@@ -307,7 +308,7 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
               height: finalHeight,
               borderWidth: radioBorder, 
               borderColor: radioColor,
-              textColor: radioColor, // This sets the color of the inner fill dot!
+              textColor: radioColor, // Colors the inner fill dot!
             });
           });
 
