@@ -81,7 +81,8 @@ export default async function handler(req, res) {
       const coords = [];
 
       items.forEach(item => {
-        const chkbx = item.querySelector('.ordering-code-chkbx');
+        // Looks for ilLumenate buttons first, then falls back to 206 Lighting's classes
+const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-btn') || item.querySelector('.part-no-btn') || item.querySelector('.ordering-code-chkbx');
         const targetElement = chkbx ? chkbx : item;
 
         const rect = targetElement.getBoundingClientRect();
@@ -277,10 +278,50 @@ export default async function handler(req, res) {
           lengthField.updateAppearances(liveFont);
 
         } else {
+          } else {
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
           let allowedValues = Array.isArray(step.allowed_values) ? step.allowed_values : [];
+
+          // --- DYNAMIC RADIO STYLING ---
+          const isIllumenate = brand === 'illumenate';
+          // #006833 converted to RGB (0/255, 104/255, 51/255)
+          const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
+          // Set border to 0 for ilLumenate so the HTML square shows through!
+          const radioBorder = isIllumenate ? 0 : 0.5;
+
+          stepCoords.forEach((coord) => {
+            const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
+            radioGroup.addOptionToPage(coord.code, targetPage, {
+              x: coord.x, 
+              y: coord.y, 
+              width: coord.width || 10, 
+              height: coord.height || 10,
+              borderWidth: radioBorder, 
+              borderColor: radioColor,
+              textColor: radioColor, // Colors the inner fill/dot
+            });
+          });
+
+          // --- AUTO-SELECT LOGIC (This naturally handles the Series button!) ---
+          if (step.is_required == 1 || step.is_required === true) {
+            if (allowedValues.length === 1) {
+              // If there is only 1 option (like the Series step), select it automatically
+              defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
+            } else {
+              allowedValues.forEach((valObj) => {
+                if (valObj.is_default === 1 && !defaultSelectedCode) {
+                  defaultSelectedCode = String(valObj.code || valObj.value);
+                }
+              });
+            }
+          }
+
+          if (defaultSelectedCode) {
+            try { radioGroup.select(defaultSelectedCode); } catch (e) {}
+          }
+        }
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
