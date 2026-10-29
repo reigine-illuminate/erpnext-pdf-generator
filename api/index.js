@@ -220,28 +220,10 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING (Poppins for ilLumenate!)
-    let customFont;
-    try {
-      const fontFileName = brand === 'illumenate' ? 'Poppins-Semibold.ttf' : 'NotoSerif-SemiBold.ttf';
-      const fontPath = path.resolve(process.cwd(), 'fonts', fontFileName);
-      
-      if (fs.existsSync(fontPath)) {
-        const fontBytes = fs.readFileSync(fontPath);
-        customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
-      } else {
-        // Fallback for casing typos (Poppins-SemiBold vs Poppins-Semibold)
-        const altFileName = brand === 'illumenate' ? 'Poppins-SemiBold.ttf' : 'NotoSerif-SemiBold.ttf';
-        const altPath = path.resolve(process.cwd(), 'fonts', altFileName);
-        const fontBytes = fs.readFileSync(altPath);
-        customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
-      }
-    } catch (err) {
-      console.log('Falling back to built-in font:', err.message);
-      const fallbackFont = brand === 'illumenate' ? StandardFonts.HelveticaBold : StandardFonts.TimesRoman;
-      customFont = await pdfDoc.embedFont(fallbackFont);
-    }
-    const liveFont = customFont;
+    // 7. DYNAMIC FONT LOADING (Standard PDF Fonts to avoid CID Glitches)
+    const helvetica = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    const liveFont = brand === 'illumenate' ? helvetica : timesRoman;
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
@@ -336,14 +318,13 @@ export default async function handler(req, res) {
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             
-            // FIX: Mathematical Centering for exactly 10x10 radio buttons
-            const finalWidth = isIllumenate ? 10 : (coord.width || 7);
-            const finalHeight = isIllumenate ? 10 : (coord.height || 7);
+            // Set dimensions to exactly 8px by 8px
+            const finalWidth = isIllumenate ? 8 : (coord.width || 7);
+            const finalHeight = isIllumenate ? 8 : (coord.height || 7);
             
-            // This takes Webflow's HTML circle width, subtracts our 10px PDF radio button, 
-            // and divides by 2 to perfectly center it regardless of DOM variations!
-            const radioOffsetX = isIllumenate ? ((coord.width || 10) - 10) / 2 : 0;
-            const radioOffsetY = isIllumenate ? ((coord.height || 10) - 10) / 2 : 0;
+            // Mathematically center the 8px PDF dot inside the Webflow HTML circle
+            const radioOffsetX = isIllumenate ? ((coord.width || 10) - 8) / 2 : 0;
+            const radioOffsetY = isIllumenate ? ((coord.height || 10) - 8) / 2 : 0;
             
             const finalX = coord.x + radioOffsetX;
             const finalY = coord.y + radioOffsetY;
@@ -400,8 +381,6 @@ export default async function handler(req, res) {
           
           displayField.acroField.dict.set(PDFName.of('Q'), pdfDoc.context.obj(1));
           
-          // FIX: Script only overwrites the text box if the radio button is ACTIVELY selected!
-          // If no radio is selected, it does nothing, letting you freely type a custom value!
           const calcScript = `
             var v = this.getField("step_${coord.step}").value;
             if (v !== null && v !== "Off" && v !== "__none__") {
