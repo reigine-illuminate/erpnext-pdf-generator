@@ -220,10 +220,20 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING (Standard PDF Fonts to avoid CID Glitches)
-    const helvetica = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    // 7. DYNAMIC FONT LOADING (Using Manrope for ilLumenate, Times Roman for 206)
+    let manropeFont = null;
+    try {
+      // Resolve the path to the fonts directory in the Vercel repo
+      const fontPath = path.join(process.cwd(), 'fonts', 'manrope-v20-latin-600.ttf');
+      const fontBytes = fs.readFileSync(fontPath);
+      manropeFont = await pdfDoc.embedFont(fontBytes);
+    } catch (e) {
+      console.warn('Failed to load Custom Font. Falling back to Helvetica.', e);
+      manropeFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    }
+
     const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    const liveFont = brand === 'illumenate' ? helvetica : timesRoman;
+    const liveFont = brand === 'illumenate' ? manropeFont : timesRoman;
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
