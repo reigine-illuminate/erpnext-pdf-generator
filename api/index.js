@@ -269,6 +269,7 @@ export default async function handler(req, res) {
 
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
+    const autoSelectedValues = {}; // Maps step to selected code for pre-filling!
     
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
@@ -322,7 +323,6 @@ export default async function handler(req, res) {
             const finalWidth = isIllumenate ? 8 : (coord.width || 7);
             const finalHeight = isIllumenate ? 8 : (coord.height || 7);
             
-            // Mathematically center the 8px PDF dot inside the Webflow HTML circle
             const radioOffsetX = isIllumenate ? ((coord.width || 10) - 8) / 2 : 0;
             const radioOffsetY = isIllumenate ? ((coord.height || 10) - 8) / 2 : 0;
             
@@ -353,6 +353,7 @@ export default async function handler(req, res) {
           }
 
           if (defaultSelectedCode) {
+            autoSelectedValues[stepStr] = defaultSelectedCode; // Log for pre-filling!
             try { radioGroup.select(defaultSelectedCode); } catch (e) {}
           }
         }
@@ -364,6 +365,9 @@ export default async function handler(req, res) {
       
       const partNoInputs = domExtraction.partNoInputCoords;
       if (partNoInputs && partNoInputs.length > 0) {
+        
+        const calcOrder = []; // Fixes the calculation override bug!
+
         partNoInputs.forEach(coord => {
           const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
           const displayField = form.createTextField('display_step_' + coord.step);
@@ -378,13 +382,20 @@ export default async function handler(req, res) {
             borderWidth: 0,
           });
           displayField.setFontSize(10);
-          
           displayField.acroField.dict.set(PDFName.of('Q'), pdfDoc.context.obj(1));
           
+          // Pre-fill the box immediately if the radio button below it was auto-selected
+          if (autoSelectedValues[coord.step]) {
+            displayField.setText(autoSelectedValues[coord.step]);
+          }
+          
           const calcScript = `
-            var v = this.getField("step_${coord.step}").value;
-            if (v !== null && v !== "Off" && v !== "__none__") {
-              event.value = String(v);
+            var f = this.getField("step_${coord.step}");
+            if (f) {
+              var v = f.value;
+              if (v !== null && v !== "Off" && v !== "__none__") {
+                event.value = String(v);
+              }
             }
           `;
           const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(calcScript));
@@ -408,8 +419,14 @@ export default async function handler(req, res) {
           for (let i = 0; i < fieldsArr.size(); i++) {
             if (String(fieldsArr.get(i)) === String(fieldRef)) fieldsArr.set(i, widgetRef);
           }
-          form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
+          
+          calcOrder.push(widgetRef); // Aggregate all fields for the calculation order
         });
+        
+        // Register ALL text fields into the Master Calculation Order list!
+        if (calcOrder.length > 0) {
+          form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj(calcOrder));
+        }
         
         form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
       }
