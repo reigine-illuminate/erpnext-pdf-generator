@@ -64,7 +64,7 @@ export default async function handler(req, res) {
       `
     });
 
-    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 4 });
     await page.emulateMediaType('print');
 
     // 4. EXTRACT DOM COORDINATES
@@ -287,10 +287,11 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
 
           // --- DYNAMIC RADIO STYLING ---
           const isIllumenate = brand === 'illumenate';
-          // #006833 converted to RGB (0/255, 104/255, 51/255)
+          // #006833 converted to RGB
           const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
-          // Borderless for ilLumenate, standard for 206
-          const radioBorder = isIllumenate ? 0 : 0.5;
+          
+          // FIX: Force a 0.5px border on all radio buttons 
+          const radioBorder = 0.5;
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
