@@ -80,11 +80,11 @@ export default async function handler(req, res) {
       const coords = [];
 
       items.forEach(item => {
-        const chkbx = item.querySelector('.ordering-code-chkbx');
-        const targetElement = chkbx ? chkbx : item;
+        // Look for the specific circle divs first, fallback to the wrapper
+        const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-btn') || item.querySelector('.ordering-code-chkbx') || item;
 
-        const rect = targetElement.getBoundingClientRect();
-        const pageWrapper = targetElement.closest('.page-wrapper');
+        const rect = chkbx.getBoundingClientRect();
+        const pageWrapper = chkbx.closest('.page-wrapper');
 
         if (!pageWrapper) return;
 
@@ -105,7 +105,6 @@ export default async function handler(req, res) {
         });
       });
 
-      // --- 206 LIGHTING: MASTER CODE BOX ---
       let codeBoxCoords = null;
       const codeBox = document.querySelector('#spec-ordering-code-input');
       if (codeBox) {
@@ -147,19 +146,20 @@ export default async function handler(req, res) {
             let fieldH = rect.height * 0.75;
             let fieldY = 792 - ((rect.top - wrapperRect.top) * 0.75) - fieldH;
             
-            // Safety net: If the empty Webflow div collapsed to 0 height, force standard field proportions
             if (fieldH < 10) {
               fieldH = 14; 
-              fieldY = 792 - ((rect.top - wrapperRect.top) * 0.75); // Pop above the bottom line
+              fieldY = 792 - ((rect.top - wrapperRect.top) * 0.75);
             }
 
             partNoInputCoords.push({
               step: step,
               pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
               x: (rect.left - wrapperRect.left) * 0.75,
-              y: fieldY,
+              // FIX: Nudge up by 1px
+              y: fieldY + 1,
               width: rect.width * 0.75,
-              height: fieldH
+              // FIX: Make 2px shorter
+              height: fieldH - 2
             });
             input.style.color = 'transparent';
           }
@@ -223,10 +223,20 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING (Standard PDF Fonts for Fields)
-    const helvetica = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    const liveFont = brand === 'illumenate' ? helvetica : timesRoman;
+    // 7. DYNAMIC FONT LOADING (Restored Custom Fonts!)
+    let customFont;
+    try {
+      const fontFileName = brand === 'illumenate' ? 'Manrope-SemiBold.ttf' : 'NotoSerif-SemiBold.ttf';
+      const fontPath = path.resolve(process.cwd(), 'fonts', fontFileName);
+      const fontBytes = fs.readFileSync(fontPath);
+      // subset: false helps prevent glyph corruption for standard letters
+      customFont = await pdfDoc.embedFont(fontBytes, { subset: false });
+    } catch (err) {
+      console.log('Falling back to built-in font:', err.message);
+      const fallbackFont = brand === 'illumenate' ? StandardFonts.HelveticaBold : StandardFonts.TimesRoman;
+      customFont = await pdfDoc.embedFont(fallbackFont);
+    }
+    const liveFont = customFont;
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
@@ -317,14 +327,20 @@ export default async function handler(req, res) {
           const isIllumenate = brand === 'illumenate';
           const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
           const radioBorder = 0.5;
+          
+          // FIX: Nudge controls for radio buttons! If it moves too far left, change -12 to -8.
+          const radioOffsetX = isIllumenate ? -12 : 0;
+          const radioOffsetY = isIllumenate ? -1.5 : 0;
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             
-            const finalX = coord.x;
-            const finalY = coord.y;
-            const finalWidth = coord.width || (isIllumenate ? 10 : 7);
-            const finalHeight = coord.height || (isIllumenate ? 10 : 7);
+            const finalX = coord.x + radioOffsetX;
+            const finalY = coord.y + radioOffsetY;
+            
+            // Reverted back to 10px exactly
+            const finalWidth = isIllumenate ? 10 : (coord.width || 7);
+            const finalHeight = isIllumenate ? 10 : (coord.height || 7);
 
             radioGroup.addOptionToPage(coord.code, targetPage, {
               x: finalX, 
@@ -359,7 +375,6 @@ export default async function handler(req, res) {
     // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR ---
     if (brand === 'illumenate') {
       
-      // ILLUMENATE LOGIC: Multiple individual display fields for each step
       const partNoInputs = domExtraction.partNoInputCoords;
       if (partNoInputs && partNoInputs.length > 0) {
         partNoInputs.forEach(coord => {
@@ -368,17 +383,20 @@ export default async function handler(req, res) {
           
           displayField.addToPage(targetPage, {
             x: coord.x,
-            y: coord.y + 1,
+            y: coord.y,
             width: coord.width,
             height: coord.height,
             font: liveFont,
-            textColor: rgb(0 / 255, 104 / 255, 51 / 255), // ilLumenate Green Text!
+            textColor: rgb(0 / 255, 104 / 255, 51 / 255),
             borderWidth: 0,
           });
           displayField.setFontSize(10);
           
-          // Center align the text to sit perfectly in the middle of the line (Q=1 is PDF spec for center)
+          // Center align the text
           displayField.acroField.dict.set(PDFName.of('Q'), pdfDoc.context.obj(1));
+          
+          // FIX: Add the ReadOnly flag (1) to prevent manual typing in calculation fields
+          displayField.acroField.dict.set(PDFName.of('Ff'), pdfDoc.context.obj(1));
           
           // Script listens to the corresponding step radio group
           const calcScript = `
@@ -396,7 +414,6 @@ export default async function handler(req, res) {
           }));
           displayField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
           
-          // Wire up the field dictionary correctly
           const fieldRef = displayField.acroField.ref;
           const fieldDict = displayField.acroField.dict;
           const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
@@ -414,13 +431,12 @@ export default async function handler(req, res) {
           form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
         });
         
-        // Force calculation on open
         form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
       }
       
     } else {
       
-      // 206 LIGHTING LOGIC: Single concatenated ordering code box
+      // 206 LIGHTING LOGIC (Unchanged)
       const codeBox = domExtraction.codeBoxCoords;
       if (codeBox && Array.isArray(configurator_options)) {
         const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
