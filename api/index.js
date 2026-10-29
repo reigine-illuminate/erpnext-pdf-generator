@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     const page = await browser.newPage();
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
-    // 3. DYNAMIC CSS (Restoring your Webflow 36px Padding!)
+    // 3. DYNAMIC CSS 
     await page.addStyleTag({
       content: `
         @media print {
@@ -46,7 +46,6 @@ export default async function handler(req, res) {
             width: 8.5in !important;
             height: 11in !important;
             margin: 0 !important;
-            /* Dynamically apply 36px padding for ilLumenate */
             padding: ${brand === 'illumenate' ? '36px' : '0'} !important;
             box-sizing: border-box !important;
             box-shadow: none !important;
@@ -81,8 +80,7 @@ export default async function handler(req, res) {
       const coords = [];
 
       items.forEach(item => {
-        // Looks for ilLumenate buttons first, then falls back to 206 Lighting's classes
-const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-btn') || item.querySelector('.part-no-btn') || item.querySelector('.ordering-code-chkbx');
+        const chkbx = item.querySelector('.ordering-code-chkbx');
         const targetElement = chkbx ? chkbx : item;
 
         const rect = targetElement.getBoundingClientRect();
@@ -107,6 +105,7 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
         });
       });
 
+      // --- 206 LIGHTING: MASTER CODE BOX ---
       let codeBoxCoords = null;
       const codeBox = document.querySelector('#spec-ordering-code-input');
       if (codeBox) {
@@ -123,12 +122,49 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
             width: rect.width * 0.75,
             height: rect.height * 0.75
           };
-
           codeBox.style.color = 'transparent';
-          codeBox.style.background = 'transparent';
-          codeBox.style.backgroundColor = 'transparent';
         }
       }
+
+      // --- ILLUMENATE: INDIVIDUAL SECTION INPUTS ---
+      let partNoInputCoords = [];
+      const partNoInputs = document.querySelectorAll('#part-no-code-input');
+      partNoInputs.forEach(input => {
+        const rect = input.getBoundingClientRect();
+        const pageWrapper = input.closest('.page-wrapper');
+        if (pageWrapper) {
+          const wrapperRect = pageWrapper.getBoundingClientRect();
+          const pageIndex = wrappers.indexOf(pageWrapper);
+          
+          const section = input.closest('.part-no-section');
+          let step = null;
+          if (section) {
+            const firstRadio = section.querySelector('[data-step]');
+            if (firstRadio) step = firstRadio.getAttribute('data-step');
+          }
+
+          if (step) {
+            let fieldH = rect.height * 0.75;
+            let fieldY = 792 - ((rect.top - wrapperRect.top) * 0.75) - fieldH;
+            
+            // Safety net: If the empty Webflow div collapsed to 0 height, force standard field proportions
+            if (fieldH < 10) {
+              fieldH = 14; 
+              fieldY = 792 - ((rect.top - wrapperRect.top) * 0.75); // Pop above the bottom line
+            }
+
+            partNoInputCoords.push({
+              step: step,
+              pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
+              x: (rect.left - wrapperRect.left) * 0.75,
+              y: fieldY,
+              width: rect.width * 0.75,
+              height: fieldH
+            });
+            input.style.color = 'transparent';
+          }
+        }
+      });
 
       const highlightItems = document.querySelectorAll('[data-highlight]');
       const highlightCoords = [];
@@ -166,10 +202,10 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
         });
       });
 
-      return { coords, codeBoxCoords, highlightCoords };
+      return { coords, codeBoxCoords, partNoInputCoords, highlightCoords };
     });
 
-    // 5. SNAP BASE PDF (Margins dictated by 0px full-bleed setting)
+    // 5. SNAP BASE PDF
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
@@ -187,19 +223,14 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING
-    // Use Standard PDF fonts for interactive fields to prevent glyph encoding corruption.
-    // Puppeteer already rendered the custom Webflow fonts in the background!
-    const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    // 7. DYNAMIC FONT LOADING (Standard PDF Fonts for Fields)
+    const helvetica = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    
-    // ilLumenate gets clean sans-serif (Helvetica), 206 gets serif (Times)
     const liveFont = brand === 'illumenate' ? helvetica : timesRoman;
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
     
-    // Register the standard font in the AcroForm Default Resources
     form.acroForm.dict.set(PDFName.of('DR'), pdfDoc.context.obj({
       Font: { [liveFont.name]: liveFont.ref }
     }));
@@ -263,7 +294,6 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
 
         if (stepCoords.length === 0) return;
 
-        // ONLY use the Text Field logic for Length if the brand is NOT ilLumenate
         if (step.option_type === "Length" && brand !== 'illumenate') {
           const lengthCoord = stepCoords[0];
           const targetPage = pages[lengthCoord.pageIndex] || pages[pages.length - 1];
@@ -279,24 +309,18 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
           lengthField.updateAppearances(liveFont);
 
         } else {
-          // For all other steps (AND ilLumenate's Length step!), create standard Radio Buttons
           const radioGroup = form.createRadioGroup(stepName);
           let defaultSelectedCode = null;
 
           let allowedValues = Array.isArray(step.allowed_values) ? step.allowed_values : [];
 
-          // --- DYNAMIC RADIO STYLING ---
           const isIllumenate = brand === 'illumenate';
-          // #006833 converted to RGB
           const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
-          
-          // FIX: Force a 0.5px border on all radio buttons 
           const radioBorder = 0.5;
 
           stepCoords.forEach((coord) => {
             const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
             
-            // Restored to exact 10px coordinates (no offset/shrinking needed for circles!)
             const finalX = coord.x;
             const finalY = coord.y;
             const finalWidth = coord.width || (isIllumenate ? 10 : 7);
@@ -308,12 +332,11 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
               width: finalWidth, 
               height: finalHeight,
               borderWidth: radioBorder, 
-              borderColor: radioColor,
-              textColor: radioColor, // Colors the inner fill dot!
+              borderColor: radioColor, 
+              textColor: radioColor, 
             });
           });
 
-          // --- AUTO-SELECT LOGIC ---
           if (step.is_required == 1 || step.is_required === true) {
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
@@ -334,114 +357,179 @@ const chkbx = item.querySelector('#series-btn') || item.querySelector('#part-no-
     }
 
     // --- C. DYNAMIC ACROJS ORDERING CODE GENERATOR ---
-    const codeBox = domExtraction.codeBoxCoords;
-    if (codeBox && Array.isArray(configurator_options)) {
-      const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
-      const orderingCodeField = form.createTextField('SpecOrderingCode');
-
-      orderingCodeField.addToPage(targetPage, {
-        x: codeBox.x,
-        y: codeBox.y + 1,
-        width: codeBox.width,
-        height: codeBox.height - 2.5,
-        font: liveFont,
-        textColor: textColor,
-        borderWidth: 0,
-      });
-      orderingCodeField.setFontSize(10);
-
-      const acroSteps = configurator_options.map(s => ({
-        stepName: 'step_' + s.option_step,
-        type: s.option_type,
-        label: s.option_label || ''
-      })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
-
-      let initialSegments = [];
-      let initialDir = "";
+    if (brand === 'illumenate') {
       
-      for (let i = 0; i < acroSteps.length; i++) {
-        let field;
-        try { field = form.getField(acroSteps[i].stepName); } catch (e) { field = null; }
-        if (field) {
-          let val = (typeof field.getSelected === 'function') ? field.getSelected() : field.getText();
-          if (val && val !== "Off" && val !== "") {
-            let isDir = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Direction");
-            let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
-
-            if (isDir) {
-              if (initialDir) initialSegments.push(initialDir);
-              initialDir = val;
-            } else if (isLen) {
-              initialSegments.push(initialDir + val);
-              initialDir = "";
+      // ILLUMENATE LOGIC: Multiple individual display fields for each step
+      const partNoInputs = domExtraction.partNoInputCoords;
+      if (partNoInputs && partNoInputs.length > 0) {
+        partNoInputs.forEach(coord => {
+          const targetPage = pages[coord.pageIndex] || pages[pages.length - 1];
+          const displayField = form.createTextField('display_step_' + coord.step);
+          
+          displayField.addToPage(targetPage, {
+            x: coord.x,
+            y: coord.y + 1,
+            width: coord.width,
+            height: coord.height,
+            font: liveFont,
+            textColor: rgb(0 / 255, 104 / 255, 51 / 255), // ilLumenate Green Text!
+            borderWidth: 0,
+          });
+          displayField.setFontSize(10);
+          
+          // Center align the text to sit perfectly in the middle of the line (Q=1 is PDF spec for center)
+          displayField.acroField.dict.set(PDFName.of('Q'), pdfDoc.context.obj(1));
+          
+          // Script listens to the corresponding step radio group
+          const calcScript = `
+            var v = this.getField("step_${coord.step}").value;
+            if (v === null || v === "Off" || v === "__none__") {
+              event.value = "";
             } else {
-              if (initialDir) { initialSegments.push(initialDir); initialDir = ""; }
-              initialSegments.push(val);
+              event.value = String(v);
+            }
+          `;
+          const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(calcScript));
+          const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
+            S: 'JavaScript',
+            JS: jsStreamRef,
+          }));
+          displayField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
+          
+          // Wire up the field dictionary correctly
+          const fieldRef = displayField.acroField.ref;
+          const fieldDict = displayField.acroField.dict;
+          const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
+          const widgetDict = pdfDoc.context.lookup(widgetRef, PDFDict);
+          ['T', 'FT', 'Ff', 'V', 'DA', 'AA', 'Q'].forEach((k) => {
+            const val = fieldDict.get(PDFName.of(k));
+            if (val) widgetDict.set(PDFName.of(k), val);
+          });
+          widgetDict.delete(PDFName.of('Parent'));
+          
+          const fieldsArr = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray);
+          for (let i = 0; i < fieldsArr.size(); i++) {
+            if (String(fieldsArr.get(i)) === String(fieldRef)) fieldsArr.set(i, widgetRef);
+          }
+          form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
+        });
+        
+        // Force calculation on open
+        form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
+      }
+      
+    } else {
+      
+      // 206 LIGHTING LOGIC: Single concatenated ordering code box
+      const codeBox = domExtraction.codeBoxCoords;
+      if (codeBox && Array.isArray(configurator_options)) {
+        const targetPage = pages[codeBox.pageIndex] || pages[pages.length - 1];
+        const orderingCodeField = form.createTextField('SpecOrderingCode');
+
+        orderingCodeField.addToPage(targetPage, {
+          x: codeBox.x,
+          y: codeBox.y + 1,
+          width: codeBox.width,
+          height: codeBox.height - 2.5,
+          font: liveFont,
+          textColor: textColor,
+          borderWidth: 0,
+        });
+        orderingCodeField.setFontSize(10);
+
+        const acroSteps = configurator_options.map(s => ({
+          stepName: 'step_' + s.option_step,
+          type: s.option_type,
+          label: s.option_label || ''
+        })).sort((a, b) => parseInt(a.stepName.split('_')[1]) - parseInt(b.stepName.split('_')[1]));
+
+        let initialSegments = [];
+        let initialDir = "";
+        
+        for (let i = 0; i < acroSteps.length; i++) {
+          let field;
+          try { field = form.getField(acroSteps[i].stepName); } catch (e) { field = null; }
+          if (field) {
+            let val = (typeof field.getSelected === 'function') ? field.getSelected() : field.getText();
+            if (val && val !== "Off" && val !== "") {
+              let isDir = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Direction");
+              let isLen = acroSteps[i].type === "Feed Direction" && acroSteps[i].label.includes("Length");
+
+              if (isDir) {
+                if (initialDir) initialSegments.push(initialDir);
+                initialDir = val;
+              } else if (isLen) {
+                initialSegments.push(initialDir + val);
+                initialDir = "";
+              } else {
+                if (initialDir) { initialSegments.push(initialDir); initialDir = ""; }
+                initialSegments.push(val);
+              }
             }
           }
         }
-      }
-      if (initialDir) initialSegments.push(initialDir);
-      orderingCodeField.setText(initialSegments.join('-'));
-      orderingCodeField.updateAppearances(liveFont);
+        if (initialDir) initialSegments.push(initialDir);
+        orderingCodeField.setText(initialSegments.join('-'));
+        orderingCodeField.updateAppearances(liveFont);
 
-      const stepNames = acroSteps.map(s => s.stepName);
-      const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
-      const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
+        const stepNames = acroSteps.map(s => s.stepName);
+        const isDirFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Direction")));
+        const isLenFlags = acroSteps.map(s => (s.type === "Feed Direction" && s.label.includes("Length")));
 
-      const acroCalcScript = `var fields = ${JSON.stringify(stepNames)};
-var isDir = ${JSON.stringify(isDirFlags)};
-var isLen = ${JSON.stringify(isLenFlags)};
-var parts = [];
-var dirVal = "";
-for (var i = 0; i < fields.length; i++) {
-  var f = this.getField(fields[i]);
-  if (!f) continue;
-  var v = f.value;
-  if (v === null || v === undefined) continue;
-  v = String(v);
-  
-  if (v === "0") v = ""; 
-  
-  if (v === "Off" || v === "" || v === "__none__") continue;
-  if (isDir[i]) {
-    if (dirVal) parts.push(dirVal);
-    dirVal = v;
-  } else if (isLen[i]) {
-    parts.push(dirVal + v);
-    dirVal = "";
-  } else {
-    if (dirVal) { parts.push(dirVal); dirVal = ""; }
-    parts.push(v);
+        const acroCalcScript = `var fields = ${JSON.stringify(stepNames)};
+  var isDir = ${JSON.stringify(isDirFlags)};
+  var isLen = ${JSON.stringify(isLenFlags)};
+  var parts = [];
+  var dirVal = "";
+  for (var i = 0; i < fields.length; i++) {
+    var f = this.getField(fields[i]);
+    if (!f) continue;
+    var v = f.value;
+    if (v === null || v === undefined) continue;
+    v = String(v);
+    
+    if (v === "0") v = ""; 
+    
+    if (v === "Off" || v === "" || v === "__none__") continue;
+    if (isDir[i]) {
+      if (dirVal) parts.push(dirVal);
+      dirVal = v;
+    } else if (isLen[i]) {
+      parts.push(dirVal + v);
+      dirVal = "";
+    } else {
+      if (dirVal) { parts.push(dirVal); dirVal = ""; }
+      parts.push(v);
+    }
   }
-}
-if (dirVal) parts.push(dirVal);
-event.value = parts.join("-");`;
+  if (dirVal) parts.push(dirVal);
+  event.value = parts.join("-");`;
 
-      const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(acroCalcScript));
-      const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
-        S: 'JavaScript',
-        JS: jsStreamRef,
-      }));
+        const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(acroCalcScript));
+        const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
+          S: 'JavaScript',
+          JS: jsStreamRef,
+        }));
 
-      orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
+        orderingCodeField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
 
-      const fieldRef = orderingCodeField.acroField.ref;
-      const fieldDict = orderingCodeField.acroField.dict;
-      const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
-      const widgetDict = pdfDoc.context.lookup(widgetRef, PDFDict);
-      ['T', 'FT', 'Ff', 'V', 'DA', 'AA'].forEach((k) => {
-        const val = fieldDict.get(PDFName.of(k));
-        if (val) widgetDict.set(PDFName.of(k), val);
-      });
-      widgetDict.delete(PDFName.of('Parent'));
+        const fieldRef = orderingCodeField.acroField.ref;
+        const fieldDict = orderingCodeField.acroField.dict;
+        const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
+        const widgetDict = pdfDoc.context.lookup(widgetRef, PDFDict);
+        ['T', 'FT', 'Ff', 'V', 'DA', 'AA'].forEach((k) => {
+          const val = fieldDict.get(PDFName.of(k));
+          if (val) widgetDict.set(PDFName.of(k), val);
+        });
+        widgetDict.delete(PDFName.of('Parent'));
 
-      const fieldsArr = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray);
-      for (let i = 0; i < fieldsArr.size(); i++) {
-        if (String(fieldsArr.get(i)) === String(fieldRef)) fieldsArr.set(i, widgetRef);
+        const fieldsArr = form.acroForm.dict.lookup(PDFName.of('Fields'), PDFArray);
+        for (let i = 0; i < fieldsArr.size(); i++) {
+          if (String(fieldsArr.get(i)) === String(fieldRef)) fieldsArr.set(i, widgetRef);
+        }
+        form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
+        form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
       }
-      form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
-      form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
     }
 
     const pdfBytes = await pdfDoc.save();
