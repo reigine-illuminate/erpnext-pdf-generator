@@ -250,9 +250,9 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       // Calculated Footer Coordinates (Locked In!)
       headerConfigs = [
-        { name: 'project_name', x: 83, y: 46, width: 187, height: 14 },
-        { name: 'fixture_type', x: 333, y: 46, width: 95, height: 14 },
-        { name: 'project_location', x: 479, y: 46, width: 107, height: 14 }
+        { name: 'project_name', x: 83, y: 46, width: 188, height: 14 },
+        { name: 'fixture_type', x: 333, y: 46, width: 96, height: 14 },
+        { name: 'project_location', x: 477, y: 46, width: 109, height: 14 }
       ];
     } else {
       // 206 Lighting Coordinates
