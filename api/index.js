@@ -252,7 +252,7 @@ export default async function handler(req, res) {
       headerConfigs = [
         { name: 'project_name', x: 83, y: 46, width: 187, height: 14 },
         { name: 'fixture_type', x: 333, y: 46, width: 95, height: 14 },
-        { name: 'project_location', x: 476, y: 46, width: 110, height: 14 }
+        { name: 'project_location', x: 479, y: 46, width: 107, height: 14 }
       ];
     } else {
       // 206 Lighting Coordinates
