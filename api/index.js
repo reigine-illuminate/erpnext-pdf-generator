@@ -126,7 +126,10 @@ export default async function handler(req, res) {
 
       // --- ILLUMENATE: INDIVIDUAL SECTION INPUTS ---
       let partNoInputCoords = [];
-      const partNoInputs = document.querySelectorAll('#part-no-code-input, .part-no-code-input');
+      // A box in a .part-no-section or .part-no-feed-section takes the step of the circles below it
+      // and fills in from them. The Length box (.part-no-length, tagged data-input-step by n8n) has
+      // no circles: it is a free text box.
+      const partNoInputs = document.querySelectorAll('#part-no-code-input, .part-no-code-input, .part-no-feeddir-input');
       partNoInputs.forEach(input => {
         const rect = input.getBoundingClientRect();
         const pageWrapper = input.closest('.page-wrapper');
@@ -134,11 +137,14 @@ export default async function handler(req, res) {
           const wrapperRect = pageWrapper.getBoundingClientRect();
           const pageIndex = wrappers.indexOf(pageWrapper);
           
-          const section = input.closest('.part-no-section') || input.closest('[class*="part-no-section"]');
+          const section = input.closest('.part-no-section, .part-no-feed-section, .part-no-length') || input.closest('[class*="part-no-section"]');
           let step = null;
+          let freeText = false;
           if (section) {
+            const inputStep = section.getAttribute('data-input-step');
             const firstRadio = section.querySelector('[data-step]');
-            if (firstRadio) step = firstRadio.getAttribute('data-step');
+            if (inputStep) { step = inputStep; freeText = true; }
+            else if (firstRadio) step = firstRadio.getAttribute('data-step');
           }
 
           if (step) {
@@ -152,6 +158,7 @@ export default async function handler(req, res) {
 
             partNoInputCoords.push({
               step: step,
+              freeText: freeText,
               pageIndex: pageIndex !== -1 ? pageIndex : wrappers.length - 1,
               x: (rect.left - wrapperRect.left) * 0.75,
               y: fieldY + 1,
@@ -398,8 +405,9 @@ export default async function handler(req, res) {
           if (autoSelectedValues[coord.step]) {
             displayField.setText(autoSelectedValues[coord.step]);
           }
-          
-          const calcScript = `
+
+          // The Length box: anyone can type into it, nothing fills it in.
+          const calcScript = coord.freeText ? '' : `
             var f = this.getField("step_${coord.step}");
             if (f) {
               var v = f.value;
@@ -408,13 +416,15 @@ export default async function handler(req, res) {
               }
             }
           `;
-          const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(calcScript));
-          const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
-            S: 'JavaScript',
-            JS: jsStreamRef,
-          }));
-          displayField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
-          
+          if (calcScript) {
+            const jsStreamRef = pdfDoc.context.register(pdfDoc.context.flateStream(calcScript));
+            const calcAction = pdfDoc.context.register(pdfDoc.context.obj({
+              S: 'JavaScript',
+              JS: jsStreamRef,
+            }));
+            displayField.acroField.dict.set(PDFName.of('AA'), pdfDoc.context.obj({ C: calcAction }));
+          }
+
           const fieldRef = displayField.acroField.ref;
           const fieldDict = displayField.acroField.dict;
           const widgetRef = fieldDict.lookup(PDFName.of('Kids'), PDFArray).get(0);
