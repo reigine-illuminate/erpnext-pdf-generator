@@ -388,6 +388,11 @@ export default async function handler(req, res) {
     if (brand === 'illumenate') {
       
       const partNoInputs = domExtraction.partNoInputCoords;
+      // The code boxes match the radio colour (fixtures #ffac33, owner 2026-11-18), else green.
+      const codeHex = /^#[0-9a-f]{6}$/i.test(domExtraction.radioHex || '') ? domExtraction.radioHex : null;
+      const codeColor = codeHex
+        ? rgb(parseInt(codeHex.slice(1, 3), 16) / 255, parseInt(codeHex.slice(3, 5), 16) / 255, parseInt(codeHex.slice(5, 7), 16) / 255)
+        : rgb(0 / 255, 104 / 255, 51 / 255);
       if (partNoInputs && partNoInputs.length > 0) {
         
         const calcOrder = []; // Fixes the calculation override bug!
@@ -402,7 +407,7 @@ export default async function handler(req, res) {
             width: coord.width,
             height: coord.height,
             font: liveFont,
-            textColor: rgb(0 / 255, 104 / 255, 51 / 255),
+            textColor: codeColor,
             borderWidth: 0,
           });
           displayField.setFontSize(10);
