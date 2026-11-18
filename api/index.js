@@ -206,7 +206,11 @@ export default async function handler(req, res) {
         });
       });
 
-      return { coords, codeBoxCoords, partNoInputCoords, highlightCoords };
+      // Radio colour set by n8n on the Part Number Builder (ilLumenate fixtures: #ffac33).
+      const builder = document.getElementById('part-no-builder');
+      const radioHex = builder ? (builder.getAttribute('data-radio-color') || '') : '';
+
+      return { coords, codeBoxCoords, partNoInputCoords, highlightCoords, radioHex };
     });
 
     // 5. SNAP BASE PDF
@@ -330,7 +334,10 @@ export default async function handler(req, res) {
           let allowedValues = Array.isArray(step.allowed_values) ? step.allowed_values : [];
 
           const isIllumenate = brand === 'illumenate';
-          const radioColor = isIllumenate ? rgb(0 / 255, 104 / 255, 51 / 255) : textColor;
+          const hex = /^#[0-9a-f]{6}$/i.test(domExtraction.radioHex || '') ? domExtraction.radioHex : null;
+          const radioColor = !isIllumenate ? textColor
+            : hex ? rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255)
+            : rgb(0 / 255, 104 / 255, 51 / 255);
           const radioBorder = 0.5;
 
           stepCoords.forEach((coord) => {
