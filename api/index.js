@@ -383,6 +383,7 @@ export default async function handler(req, res) {
     // --- B. INTERACTIVE RADIO BUTTONS & LENGTH INPUT OVERLAYS ---
     const domCoords = domExtraction.coords;
     const autoSelectedValues = {}; // Maps step to selected code for pre-filling!
+    const blankCodes = {}; // Maps step to the option names whose code is blank.
     
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
@@ -478,8 +479,11 @@ export default async function handler(req, res) {
             }
           }
 
+          // Options with a blank code (a feed length's "Endcap"; owner, 2026-11-19) are named by
+          // their value, but put nothing in the code box.
+          blankCodes[stepStr] = allowedValues.filter(v => v && v.code === '').map(v => String(v.value || ''));
           if (defaultSelectedCode) {
-            autoSelectedValues[stepStr] = defaultSelectedCode; // Log for pre-filling!
+            autoSelectedValues[stepStr] = blankCodes[stepStr].includes(defaultSelectedCode) ? '' : defaultSelectedCode;
             try { radioGroup.select(defaultSelectedCode); } catch (e) {}
           }
         }
@@ -526,7 +530,7 @@ export default async function handler(req, res) {
             if (f) {
               var v = f.value;
               if (v !== null && v !== "Off" && v !== "__none__") {
-                event.value = String(v);
+                event.value = ${JSON.stringify(blankCodes[coord.step] || [])}.indexOf(String(v)) >= 0 ? "" : String(v);
               }
             }
           `;
