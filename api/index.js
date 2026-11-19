@@ -28,6 +28,50 @@ export default async function handler(req, res) {
     });
 
     const page = await browser.newPage();
+
+    // ilLumenate (owner, 2026-11-19): Manrope and Poppins from the static files in fonts/ instead
+    // of Google's. Chromium cannot embed Google's variable Manrope as a normal font, so its text
+    // became Type 3 fonts that some viewers draw badly (uneven spacing, broken letters). The
+    // page's Google Fonts request (http or https) is answered with Google's own CSS minus these
+    // families' faces, plus one face per static weight. Missing files are skipped.
+    if (brand === 'illumenate') {
+      const LOCAL_FONTS = {
+        Manrope: { 200: 'Manrope-ExtraLight.ttf', 300: 'Manrope-Light.ttf', 400: 'Manrope-Regular.ttf',
+          500: 'Manrope-Medium.ttf', 600: 'Manrope-SemiBold.ttf', 700: 'Manrope-Bold.ttf', 800: 'Manrope-ExtraBold.ttf' },
+        Poppins: { 300: 'Poppins-Light.ttf', 400: 'Poppins-Regular.ttf', 500: 'Poppins-Medium.ttf',
+          600: 'Poppins-SemiBold.ttf', 700: 'Poppins-Bold.ttf' },
+      };
+      const localCss = {};
+      Object.entries(LOCAL_FONTS).forEach(([family, files]) => {
+        const faces = Object.entries(files).map(([weight, file]) => {
+          try {
+            const data = fs.readFileSync(path.join(process.cwd(), 'fonts', file)).toString('base64');
+            return `@font-face{font-family:'${family}';font-style:normal;font-weight:${weight};font-display:block;`
+              + `src:url(data:font/ttf;base64,${data}) format('truetype');}`;
+          } catch (e) { return ''; }
+        }).join('\n');
+        if (faces) localCss[family] = faces;
+      });
+      const families = Object.keys(localCss);
+      if (families.length) {
+        await page.setRequestInterception(true);
+        page.on('request', async request => {
+          const url = request.url();
+          const asked = families.filter(family => new RegExp(family, 'i').test(url));
+          if (!/^https?:\/\/fonts\.googleapis\.com\/css/.test(url) || !asked.length) return request.continue();
+          let css = '';
+          try {
+            const response = await fetch(url.replace(/^http:/, 'https:'), { headers: { 'user-agent': await browser.userAgent() } });
+            css = await response.text();
+            asked.forEach(family => {
+              css = css.replace(new RegExp(`@font-face\\s*\\{[^}]*font-family:\\s*['"]?${family}['"]?[^}]*\\}`, 'g'), '');
+            });
+          } catch (e) { css = ''; }
+          request.respond({ status: 200, contentType: 'text/css', body: asked.map(family => localCss[family]).join('\n') + '\n' + css });
+        });
+      }
+    }
+
     await page.setContent(cleanHtml, { waitUntil: 'networkidle0' });
 
     // 3. DYNAMIC CSS 
@@ -62,6 +106,55 @@ export default async function handler(req, res) {
         }
       `
     });
+
+    // ilLumenate (owner, 2026-11-19): borders thinner than 1px. Chromium prints every border
+    // at least 1px (about 0.72pt) thick, whatever the stylesheet says; a box shadow keeps its
+    // real width. So each border the page's stylesheets give a width under 1px is drawn as a
+    // shadow of that width and colour instead. Media rules count only when they match.
+    if (brand === 'illumenate') {
+      await page.evaluate(() => {
+        const thin = [];
+        const sides = ['top', 'right', 'bottom', 'left'];
+        const walk = rules => {
+          for (const rule of rules) {
+            if (rule.media) {
+              if (window.matchMedia(rule.media.mediaText).matches) { try { walk(rule.cssRules); } catch (e) {} }
+              continue;
+            }
+            if (!rule.selectorText || !rule.style) continue;
+            sides.forEach(side => {
+              // A shorthand with a var() colour leaves the width longhand empty, so the width is
+              // also read from the border-<side> and border shorthands.
+              const texts = [rule.style.getPropertyValue(`border-${side}-width`),
+                rule.style.getPropertyValue(`border-${side}`), rule.style.getPropertyValue('border')];
+              for (const text of texts) {
+                const match = /(^|\s)(\d*\.?\d+)px(\s|$)/.exec(text || '');
+                if (!match) continue;
+                const value = parseFloat(match[2]);
+                if (value > 0 && value < 1) thin.push([rule.selectorText, side, value]);
+                break;
+              }
+            });
+          }
+        };
+        for (const sheet of document.styleSheets) { try { walk(sheet.cssRules); } catch (e) {} }
+        // An outer shadow moved out by the border's width. It is 0.5px smaller all round (and moved
+        // 0.5px further) so its ends do not sit on the box's own edges, which left a faint seam.
+        const offset = { top: w => `0 -${w + 0.5}px`, bottom: w => `0 ${w + 0.5}px`, left: w => `-${w + 0.5}px 0`, right: w => `${w + 0.5}px 0` };
+        thin.forEach(([selector, side, width]) => {
+          let elements = [];
+          try { elements = document.querySelectorAll(selector); } catch (e) { return; }
+          elements.forEach(el => {
+            const style = getComputedStyle(el);
+            if (style.getPropertyValue(`border-${side}-style`) === 'none') return;
+            const color = style.getPropertyValue(`border-${side}-color`);
+            el.style.setProperty(`border-${side}-width`, '0px');
+            const shadow = `${offset[side](width)} 0 -0.5px ${color}`;
+            el.style.boxShadow = el.style.boxShadow && el.style.boxShadow !== 'none' ? `${el.style.boxShadow}, ${shadow}` : shadow;
+          });
+        });
+      });
+    }
 
     await page.setViewport({ width: 816, height: 1056, deviceScaleFactor: 4 });
     await page.emulateMediaType('print');
@@ -231,20 +324,12 @@ export default async function handler(req, res) {
       pdfDoc.setSubject(JSON.stringify(domExtraction.highlightCoords));
     }
 
-    // 7. DYNAMIC FONT LOADING (Using Manrope for ilLumenate, Times Roman for 206)
-    let manropeFont = null;
-    try {
-      // Resolve the path to the fonts directory in the Vercel repo
-      const fontPath = path.join(process.cwd(), 'fonts', 'manrope-v20-latin-600.ttf');
-      const fontBytes = fs.readFileSync(fontPath);
-      manropeFont = await pdfDoc.embedFont(fontBytes);
-    } catch (e) {
-      console.warn('Failed to load Custom Font. Falling back to Helvetica.', e);
-      manropeFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-    }
-
+    // 7. FONT OF THE FILLABLE FIELDS (Helvetica Bold for ilLumenate, Times Roman for 206)
+    // ilLumenate (owner, 2026-11-19): Helvetica Bold, one of the fonts every PDF viewer has built
+    // in. With the embedded Manrope, viewers that redraw a field (Chrome, Preview) decoded its
+    // letters wrongly and showed Greek-looking characters.
     const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
-    const liveFont = brand === 'illumenate' ? manropeFont : timesRoman;
+    const liveFont = brand === 'illumenate' ? await pdfDoc.embedFont(StandardFonts.HelveticaBold) : timesRoman;
 
     const form = pdfDoc.getForm();
     const pages = pdfDoc.getPages();
@@ -582,6 +667,13 @@ export default async function handler(req, res) {
         form.acroForm.dict.set(PDFName.of('CO'), pdfDoc.context.obj([widgetRef]));
         form.acroForm.dict.delete(PDFName.of('NeedAppearances'));
       }
+    }
+
+    // ilLumenate (owner, 2026-11-19): no blue field highlight. Acrobat and browser viewers tint
+    // fillable fields blue, which made filled-in codes hard to read; this asks the viewer to turn
+    // that off when the spec sheet opens. Viewers without PDF scripts ignore it.
+    if (brand === 'illumenate') {
+      pdfDoc.addJavaScript('ill_no_field_highlight', 'try { app.runtimeHighlight = false; } catch (e) {}');
     }
 
     const pdfBytes = await pdfDoc.save();
