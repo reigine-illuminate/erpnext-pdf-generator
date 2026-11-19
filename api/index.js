@@ -276,11 +276,18 @@ export default async function handler(req, res) {
 
     headerConfigs.forEach(cfg => {
       const tf = form.createTextField(cfg.name);
+      // ilLumenate (owner, 2026-11-19): the footer fields are on every page (one field, so a
+      // value typed once shows on all of them) and have no background, so the page's underline
+      // shows through. 206 Lighting keeps its first two pages and white boxes.
+      const isIllumenate = brand === 'illumenate';
       pages.forEach(p => {
-        if (pages.indexOf(p) < 2) {
+        if (isIllumenate || pages.indexOf(p) < 2) {
             tf.addToPage(p, {
               x: cfg.x, y: cfg.y, width: cfg.width, height: cfg.height,
-              borderWidth: 0, backgroundColor: rgb(1, 1, 1), textColor, font: liveFont,
+              borderWidth: 0, textColor, font: liveFont,
+              // pdf-lib draws a white box unless backgroundColor is given (undefined = none).
+              backgroundColor: isIllumenate ? undefined : rgb(1, 1, 1),
+              ...(isIllumenate ? { borderColor: undefined } : {}),
             });
         }
       });
