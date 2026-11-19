@@ -459,7 +459,10 @@ export default async function handler(req, res) {
           if (step.is_required == 1 || step.is_required === true) {
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
-            } else {
+            } else if (!isIllumenate) {
+              // ilLumenate (owner, 2026-11-19): no option is picked in advance. A pre-picked
+              // default (WH, MC, SV) could not be clicked to fill its code box, since clicking
+              // the selected option is no change. Steps with one option stay selected.
               allowedValues.forEach((valObj) => {
                 if (valObj.is_default === 1 && !defaultSelectedCode) {
                   defaultSelectedCode = String(valObj.code || valObj.value);
