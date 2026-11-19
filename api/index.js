@@ -522,6 +522,9 @@ export default async function handler(req, res) {
           // Pre-fill the box immediately if the radio button below it was auto-selected
           if (autoSelectedValues[coord.step]) {
             displayField.setText(autoSelectedValues[coord.step]);
+            // Draw it now (owner, 2026-11-19): without an appearance the viewer showed the code
+            // only once the box was clicked, and clicking the already-picked option changes nothing.
+            displayField.updateAppearances(liveFont);
           }
 
           // The Length box: anyone can type into it, nothing fills it in.
