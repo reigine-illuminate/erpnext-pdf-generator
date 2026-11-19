@@ -387,9 +387,12 @@ export default async function handler(req, res) {
     const safeSlug = (product_slug || "").toUpperCase();
     if (Array.isArray(configurator_options) && safeSlug) {
       const hasSeries = configurator_options.some(c => c.option_step === 0 && c.option_type === "Series");
+      // When another step already uses 0 (LED Neon's IP Rating; owner, 2026-11-19) the Series is
+      // step 'S', as n8n tags it, so the two do not share the field step_0.
+      const zeroTaken = configurator_options.some(c => String(c.option_step) === '0' && c.option_type !== "Series");
       if (!hasSeries) {
         configurator_options.unshift({
-          option_step: 0,
+          option_step: zeroTaken ? 'S' : 0,
           option_type: "Series",
           is_required: 1,
           allowed_values: [{ code: safeSlug }]
