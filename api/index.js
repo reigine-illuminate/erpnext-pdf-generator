@@ -459,7 +459,11 @@ export default async function handler(req, res) {
             });
           });
 
-          if (step.is_required == 1 || step.is_required === true) {
+          // ilLumenate (owner, 2026-11-19): a step with only one option is picked and its code
+          // box filled, required or not (LED Neon's IP Rating, Output Level, Finish).
+          if (isIllumenate && allowedValues.length === 1) {
+            defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
+          } else if (step.is_required == 1 || step.is_required === true) {
             if (allowedValues.length === 1) {
               defaultSelectedCode = String(allowedValues[0].code || allowedValues[0].value);
             } else if (!isIllumenate) {
